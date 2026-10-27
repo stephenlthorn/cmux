@@ -55,6 +55,14 @@ struct TerminalKeyEncoderTests {
         #expect(TerminalKeyEncoder.controlCharacter(for: input) == Data([expected]))
     }
 
+    /// `"ß".uppercased()` is "SS", so Ctrl+ß sent 0x13 (XOFF, which freezes
+    /// output); dotless "ı" uppercases to "I" and sent Tab.
+    @Test("control with a non-ASCII letter has no control byte", arguments: ["ß", "ı", "ﬀ", "ſ", "é"])
+    func controlNonASCIILetterIsUnmapped(input: String) {
+        #expect(TerminalKeyEncoder.controlCharacter(for: input) == nil)
+        #expect(TerminalKeyEncoder.encode(character: input, modifiers: [.control]) == nil)
+    }
+
     @Test("control+shift still resolves the control byte")
     func controlShift() {
         #expect(TerminalKeyEncoder.encode(character: "@", modifiers: [.control, .shift]) == Data([0x00]))

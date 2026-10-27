@@ -966,8 +966,8 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
             #endif
             // Send all text directly to the transport as raw bytes.
             // Ghostty is display-only; the remote server handles echo.
-            // Replace \n with \r (terminals expect CR for Return).
-            let normalized = text.replacingOccurrences(of: "\n", with: "\r")
+            // Line breaks become \r (terminals expect CR for Return).
+            let normalized = TerminalTextInputPipeline.terminalText(text)
             let data = Data(normalized.utf8)
             TerminalInputDebugLog.log("surface.onText text=\(TerminalInputDebugLog.textSummary(text)) data=\(TerminalInputDebugLog.dataSummary(data))")
             self.delegate?.ghosttySurfaceView(self, didProduceInput: data)
@@ -4571,7 +4571,7 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
 
     private func sendText(_ text: String) {
         guard let surface else { return }
-        let normalized = text.replacingOccurrences(of: "\n", with: "\r")
+        let normalized = TerminalTextInputPipeline.terminalText(text)
         let count = normalized.utf8CString.count
         guard count > 1 else { return }
         normalized.withCString { pointer in

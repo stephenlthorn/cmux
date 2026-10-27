@@ -41,4 +41,15 @@ public struct TerminalTextInputPipeline {
         }
         return Result(committedText: text, nextBufferText: "")
     }
+
+    /// The text a terminal should receive for typed or pasted text: every
+    /// line break becomes the carriage return a terminal reads as Return.
+    /// A pasted CRLF is one line break, so it becomes one `\r`, not two.
+    ///
+    /// - Parameter text: The committed or pasted text.
+    /// - Returns: The text with each line break as a single `\r`.
+    public static func terminalText(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\r")
+            .replacingOccurrences(of: "\n", with: "\r")
+    }
 }

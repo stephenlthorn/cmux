@@ -110,8 +110,11 @@ public struct TerminalKeyEncoder {
             break
         }
 
-        guard let scalar = input.uppercased().unicodeScalars.first,
-              input.unicodeScalars.count == 1 else { return nil }
+        // Only ASCII has a control byte. Uppercasing "ß" gives "SS", so
+        // Ctrl+ß sent XOFF (0x13) and froze output; "ı" gives "I" and sent Tab.
+        guard input.unicodeScalars.count == 1,
+              input.unicodeScalars.first?.isASCII == true,
+              let scalar = input.uppercased().unicodeScalars.first else { return nil }
         guard (0x40...0x5F).contains(scalar.value) else { return nil }
         return Data([UInt8(scalar.value & 0x1F)])
     }

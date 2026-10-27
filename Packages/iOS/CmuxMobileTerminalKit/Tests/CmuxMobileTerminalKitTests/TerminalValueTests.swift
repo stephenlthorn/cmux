@@ -69,6 +69,19 @@ struct TerminalTextInputPipelineTests {
         #expect(result.committedText == nil)
         #expect(result.nextBufferText == "")
     }
+
+    /// Pasted Windows text ("a\r\nb") became "a\r\rb": two Returns per line.
+    @Test("every line break becomes one Return", arguments: [
+        ("a\r\nb", "a\rb"),
+        ("a\r\n\r\nb\r\n", "a\r\rb\r"),
+        ("a\nb", "a\rb"),
+        ("a\n\nb", "a\r\rb"),
+        ("a\rb", "a\rb"),
+        ("plain", "plain"),
+    ])
+    func lineBreaksBecomeOneReturn(input: String, expected: String) {
+        #expect(TerminalTextInputPipeline.terminalText(input) == expected)
+    }
 }
 
 @Suite("TerminalFontZoomDirection")
