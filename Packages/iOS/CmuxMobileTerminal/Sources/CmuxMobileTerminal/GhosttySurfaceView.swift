@@ -3613,6 +3613,9 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
         } else {
             delegate?.ghosttySurfaceView(self, didChangeWindowAttachment: false)
             prepareForReuseAfterDetach()
+            if isDismantled {
+                disposeSurface()
+            }
         }
     }
 
@@ -4301,6 +4304,13 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
         }
         artifactChipAccessibilityObserverTokens.removeAll()
         prepareForReuseAfterDetach()
+        // The view and its bridge hold each other until the surface is freed,
+        // so deinit can't run first. SwiftUI never mounts a dismantled view
+        // again: free the surface now, or when the view leaves the window it
+        // is still drawing in.
+        if window == nil {
+            disposeSurface()
+        }
     }
 
     /// Quiesces the surface on window detach: resigns input, stops the display

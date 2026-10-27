@@ -43,6 +43,67 @@ struct GhosttyRuntimeLifetimeTests {
         #expect(weakRuntime == nil)
     }
 
+    /// SwiftUI's dismantle is the only teardown a mounted terminal gets. The
+    /// view and its bridge hold each other and libghostty holds the bridge,
+    /// so a dismantle that leaves the surface alive leaks the view, its
+    /// surface and the runtime.
+    @MainActor
+    @Test("a dismantled surface view is released with its surface")
+    func dismantledViewIsReleased() async throws {
+        let delegate = LifetimeTestSurfaceDelegate()
+        weak var weakRuntime: GhosttyRuntime?
+        weak var weakView: GhosttySurfaceView?
+        var view: GhosttySurfaceView?
+        do {
+            let runtime = try GhosttyRuntime()
+            weakRuntime = runtime
+            view = GhosttySurfaceView(runtime: runtime, delegate: delegate)
+            weakView = view
+        }
+        try #require(view?.surface != nil)
+        #expect(await view?.processOutputAndWaitWithTestDeadline(Data("X".utf8)) == true)
+
+        view?.prepareForDismantle()
+        view = nil
+
+        let deadline = ContinuousClock.now + .seconds(10)
+        while weakView != nil || weakRuntime != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(weakView == nil)
+        #expect(weakRuntime == nil)
+    }
+
+    /// A view dismantled while still in a window keeps its surface, so it
+    /// can still draw while it leaves, and is released once it is removed.
+    @MainActor
+    @Test("a surface dismantled on screen is released when it leaves the window")
+    func surfaceDismantledOnScreenIsReleasedWhenRemoved() async throws {
+        let delegate = LifetimeTestSurfaceDelegate()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.isHidden = false
+        defer { window.isHidden = true }
+        weak var weakView: GhosttySurfaceView?
+        do {
+            let view = GhosttySurfaceView(runtime: try GhosttyRuntime.shared(), delegate: delegate)
+            view.autoFocusOnWindowAttach = false
+            view.isRenderDispatchSuppressed = true
+            weakView = view
+            view.frame = window.bounds
+            window.addSubview(view)
+
+            view.prepareForDismantle()
+            #expect(view.surface != nil)
+            view.removeFromSuperview()
+        }
+
+        let deadline = ContinuousClock.now + .seconds(10)
+        while weakView != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(weakView == nil)
+    }
+
     /// The view owns its output queue, and the queue holds itself only weakly
     /// between work items. A surface free still queued behind other work when
     /// the view is released has to run anyway, or the surface and its
