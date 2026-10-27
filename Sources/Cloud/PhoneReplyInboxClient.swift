@@ -93,12 +93,14 @@ final class PhoneReplyInboxClient {
     @MainActor
     func fetchPending() async -> [PhoneReplyRecord]? {
         guard (try? await retryAfterGate.wait()) != nil else { return nil }
+        let target = PhoneReplyFetchTarget(
+            macDeviceID: MobileHostIdentity.deviceID(),
+            macInstanceTag: MobileHostIdentity.instanceTag(),
+            macBuildID: PhoneReplyFetchTarget.macBuildID(bundleIdentifier: Bundle.main.bundleIdentifier)
+        )
         guard let request = await authorizedRequest(
             path: "/v1/replies/e2e",
-            queryItems: [URLQueryItem(
-                name: "macDeviceId",
-                value: MobileHostIdentity.deviceID()
-            )]
+            queryItems: target.queryItems
         ) else { return nil }
         do {
             let (data, response) = try await session.data(for: request)

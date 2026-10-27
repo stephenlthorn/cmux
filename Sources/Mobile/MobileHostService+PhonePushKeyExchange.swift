@@ -23,7 +23,7 @@ extension MobileHostService {
 
             let macDeviceID = MobileHostIdentity.deviceID()
             let macInstanceTag = MobileHostIdentity.instanceTag()
-            let macBuildID = Bundle.main.bundleIdentifier ?? "cmux"
+            let macBuildID = PhoneReplyFetchTarget.macBuildID(bundleIdentifier: Bundle.main.bundleIdentifier)
             let macKey = try PhonePushKeyMaterial.current(bundleID: macBuildID)
 
             // The account and Mac identity are all derived locally. The phone
