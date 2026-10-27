@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import Network
+import os
 
 /// A de-singletonized network-reachability monitor backed by `NWPathMonitor`.
 ///
@@ -20,6 +21,10 @@ public actor ReachabilityService: ReachabilityProviding {
     private let monitor: NWPathMonitor
     // Network.framework requires a callback queue; its handler re-enters the actor.
     private let queue: DispatchQueue
+    // Carve-out: stamp each NWPath callback synchronously on the monitor queue,
+    // before its actor hop, so a reordered older path can be dropped.
+    private let pathSequence = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+    private var lastAppliedPathSequence: UInt64 = 0
     private var started = false
     private var online = true
     private var lastInterfaceType: NWInterface.InterfaceType?
@@ -151,16 +156,27 @@ public actor ReachabilityService: ReachabilityProviding {
     private func startIfNeeded() {
         guard !started else { return }
         started = true
+        let pathSequence = pathSequence
         monitor.pathUpdateHandler = { [weak self] path in
             // Compute Sendable values on the monitor queue; never capture NWPath.
+            let sequence = pathSequence.withLock { sequence in
+                sequence += 1
+                return sequence
+            }
             let isSatisfied = path.status == .satisfied
             let primaryType = ReachabilityService.primaryInterfaceType(of: path)
-            Task { await self?.apply(online: isSatisfied, primaryType: primaryType) }
+            Task {
+                await self?.apply(online: isSatisfied, primaryType: primaryType, sequence: sequence)
+            }
         }
         monitor.start(queue: queue)
     }
 
-    private func apply(online: Bool, primaryType: NWInterface.InterfaceType?) {
+    func apply(online: Bool, primaryType: NWInterface.InterfaceType?, sequence: UInt64) {
+        // Each callback reaches the actor in its own task, so an older path can
+        // land after a newer one; applying it would roll the state back.
+        guard sequence > lastAppliedPathSequence else { return }
+        lastAppliedPathSequence = sequence
         let wasOnline = self.online
         let previousType = lastInterfaceType
         self.online = online

@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import CmuxMobileTransport
 
@@ -40,4 +41,15 @@ import Testing
     let generation = await shim.pathChangeGeneration
     #expect(isOnline == !isOffline)
     #expect(generation == 0)
+}
+
+@Test func reachabilityServiceDropsAPathThatArrivesAfterANewerOne() async {
+    let service = ReachabilityService()
+
+    // Each monitor callback hops to the actor in its own task, so an older
+    // offline path can land after the newer online one it preceded.
+    await service.apply(online: true, primaryType: .wifi, sequence: 2)
+    await service.apply(online: false, primaryType: nil, sequence: 1)
+
+    #expect(await service.isOnline)
 }
