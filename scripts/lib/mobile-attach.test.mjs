@@ -41,6 +41,22 @@ function resolveDevAPIBaseURL(fallback, override = "") {
   ]);
 }
 
+function resolveIrohV2(prodAuth, extraEnv = {}) {
+  return run(
+    "bash",
+    [
+      "-c",
+      'source "$1"; environment="$(cmux_attach_resolve_iroh_v2_environment "$2")" || exit 1; '
+        + 'base_url="$(cmux_attach_resolve_iroh_v2_base_url "$environment")" || exit 1; '
+        + 'printf "%s %s" "$environment" "$base_url"',
+      "mobile-attach-test",
+      validator,
+      prodAuth,
+    ],
+    { CMUX_IROH_V2_ENVIRONMENT: "", CMUX_IROH_V2_BASE_URL: "", ...extraEnv },
+  );
+}
+
 function removeStaleSocket(socketPath) {
   return run(
     "bash",
@@ -460,6 +476,52 @@ test("shared dev API origin accepts an explicit trusted backend", () => {
   );
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "https://cmux-staging.vercel.app");
+});
+
+test("Debug builds default to the development Iroh v2 Worker", () => {
+  const result = resolveIrohV2("0");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "development https://cmux-v2-development.debussy.workers.dev");
+});
+
+test("production-auth builds default to the production Iroh v2 Worker", () => {
+  // Any other Worker answers a production Stack identity with 403
+  // environment_mismatch, so the phone never reaches the Mac.
+  const result = resolveIrohV2("1");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "production https://cmux-v2.debussy.workers.dev");
+});
+
+test("explicit Iroh v2 settings win over production auth", () => {
+  const result = resolveIrohV2("1", {
+    CMUX_IROH_V2_ENVIRONMENT: "staging",
+    CMUX_IROH_V2_BASE_URL: "https://v2.example",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "staging https://v2.example");
+});
+
+test("an unknown Iroh v2 environment fails the build", () => {
+  const result = resolveIrohV2("0", { CMUX_IROH_V2_ENVIRONMENT: "prod" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unknown Iroh v2 environment 'prod'/u);
+});
+
+test("macOS and iOS reloads resolve the Iroh v2 Worker through the shared helper", () => {
+  const macReload = fs.readFileSync(path.join(repoRoot, "scripts/reload.sh"), "utf8");
+  const iosReload = fs.readFileSync(path.join(repoRoot, "ios/scripts/reload.sh"), "utf8");
+
+  for (const source of [macReload, iosReload]) {
+    assert.match(
+      source,
+      /CMUX_IROH_V2_ENVIRONMENT_VALUE="\$\(cmux_attach_resolve_iroh_v2_environment "\$PROD_AUTH"\)"/u,
+    );
+    assert.doesNotMatch(source, /CMUX_IROH_V2_ENVIRONMENT:-development/u);
+  }
+  assert.match(
+    macReload,
+    /CMUX_IROH_V2_BASE_URL_VALUE="\$\(cmux_attach_resolve_iroh_v2_base_url "\$CMUX_IROH_V2_ENVIRONMENT_VALUE"\)"/u,
+  );
 });
 
 test("tagged stale-socket cleanup removes only the exact Unix socket", async () => {

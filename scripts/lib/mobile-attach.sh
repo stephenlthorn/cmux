@@ -21,6 +21,40 @@ cmux_attach_resolve_dev_api_base_url() {
   fi
 }
 
+# Resolve the Iroh v2 Worker a tagged Mac and its mobile build share. A
+# --prod-auth build signs in to the production Stack project, and every other
+# Worker answers that identity with 403 environment_mismatch, so production
+# auth defaults to the production Worker. Explicit CMUX_IROH_V2_* values win.
+cmux_attach_resolve_iroh_v2_environment() {
+  local prod_auth="$1"
+  if [[ -n "${CMUX_IROH_V2_ENVIRONMENT:-}" ]]; then
+    printf '%s' "$CMUX_IROH_V2_ENVIRONMENT"
+  elif [[ "$prod_auth" == "1" ]]; then
+    printf '%s' "production"
+  else
+    printf '%s' "development"
+  fi
+}
+
+# Mirrors the Worker origins in MobileHostV2Configuration and
+# MobileIrohV2Configuration, which reject any other environment name.
+cmux_attach_resolve_iroh_v2_base_url() {
+  local environment="$1"
+  if [[ -n "${CMUX_IROH_V2_BASE_URL:-}" ]]; then
+    printf '%s' "$CMUX_IROH_V2_BASE_URL"
+    return 0
+  fi
+  case "$environment" in
+    production) printf '%s' "https://cmux-v2.debussy.workers.dev" ;;
+    staging) printf '%s' "https://cmux-v2-staging.debussy.workers.dev" ;;
+    development) printf '%s' "https://cmux-v2-development.debussy.workers.dev" ;;
+    *)
+      echo "error: unknown Iroh v2 environment '$environment'; use production, staging or development" >&2
+      return 1
+      ;;
+  esac
+}
+
 # Raw slug WITHOUT the empty-input fallback: lowercase, ASCII non-[a-z0-9] -> '-',
 # trimmed/collapsed. Empty when the tag has no ASCII alphanumerics. The ASCII
 # class is deliberate (matches reload.sh + cmux-debug-cli.sh socket/DerivedData
