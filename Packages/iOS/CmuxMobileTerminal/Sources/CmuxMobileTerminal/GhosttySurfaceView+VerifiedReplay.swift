@@ -508,6 +508,10 @@ extension GhosttySurfaceView {
             MobileDebugLog.anchormux(
                 "verified_replay.callback_rejected reason=\(failureReason)"
             )
+            if pending.fence.expectedGeometryRevision != verifiedReplayGeometryRevision
+                || pending.fence.expectedGeometry != modelGeometry {
+                resubmitVerifiedReplayForCurrentGeometry()
+            }
             return false
         }
         guard pending.fence.acknowledge(
@@ -634,6 +638,16 @@ extension GhosttySurfaceView {
         return true
     }
 
+    /// A geometry change that lands while a replacement token is in flight is
+    /// coalesced behind that token's disposition. A token the newer geometry
+    /// invalidated is that disposition, so submit again at the current
+    /// geometry instead of holding the render gate until the replay timeout
+    /// rebuilds the surface.
+    private func resubmitVerifiedReplayForCurrentGeometry() {
+        renderReplacementInFlight = false
+        restartPendingVerifiedReplayPresentationForCurrentGeometry(countsAsRetry: true)
+    }
+
     /// Called by the display link until the exact acknowledged target reaches
     /// Core Animation's presentation tree.
     func completePendingVerifiedReplayPresentationIfPresented() {
@@ -660,6 +674,12 @@ extension GhosttySurfaceView {
             modelGeometry: modelGeometry,
             presentationGeometry: presentationGeometry
         ) else {
+            // An acknowledged token is no longer in flight, so a geometry
+            // change coalesced behind it has nothing left to wait for.
+            if pending.fence.acknowledgedIdentity != nil,
+               pending.fence.expectedGeometryRevision != verifiedReplayGeometryRevision {
+                resubmitVerifiedReplayForCurrentGeometry()
+            }
             return
         }
         if pending.observedFrame != nil || pending.rearmReadyFenceOnPresent,
