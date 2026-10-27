@@ -29,6 +29,11 @@ public struct TerminalRowCapacityFit {
     private let containerPixelWidth: CGFloat?
     /// The measured cell width in device pixels at ``liveFontSize``, when horizontal capacity is measured.
     private let cellPixelWidth: CGFloat?
+    /// Absorbs floating-point error in a container-over-cell division that is
+    /// a whole number of cells: `1320 / (1320 / 56)` is 55.99999999999999, so
+    /// the phone reported one column less than it shows. Real fractions of a
+    /// cell are far larger, so this never reports a cell that does not fit.
+    private static let wholeCellTolerance: CGFloat = 1e-9
 
     /// Creates a fit over one two-axis geometry measurement, or nil when any
     /// input is not measurable yet (pre-layout zeroes).
@@ -56,7 +61,7 @@ public struct TerminalRowCapacityFit {
         guard baseFontSize > 0 else { return nil }
         let baseCellHeight = cellPixelHeight * CGFloat(baseFontSize) / CGFloat(liveFontSize)
         guard baseCellHeight > 0 else { return nil }
-        return max(1, Int((containerPixelHeight / baseCellHeight).rounded(.down)))
+        return max(1, Int((containerPixelHeight / baseCellHeight + Self.wholeCellTolerance).rounded(.down)))
     }
 
     /// The column capacity this device should REPORT: how many columns fit in
@@ -67,6 +72,6 @@ public struct TerminalRowCapacityFit {
         guard let containerPixelWidth, let cellPixelWidth, baseFontSize > 0 else { return nil }
         let baseCellWidth = cellPixelWidth * CGFloat(baseFontSize) / CGFloat(liveFontSize)
         guard baseCellWidth > 0 else { return nil }
-        return max(1, Int((containerPixelWidth / baseCellWidth).rounded(.down)))
+        return max(1, Int((containerPixelWidth / baseCellWidth + Self.wholeCellTolerance).rounded(.down)))
     }
 }
