@@ -125,13 +125,18 @@ import Testing
         let host = try SSHHost(destination: SSHDestination(parsing: "leo@lab.tail1.ts.net")).named("lab")
         let ssh = SSHMachineSession(host: host, binary: URL(fileURLWithPath: "/usr/bin/false"),
                                     paths: SSHPaths(root: URL(fileURLWithPath: "/private/tmp/cn-tab-attention-remote-unused")),
-                                    environment: { [:] })
+                                    environment: { [:] }, mainWork: services.mainWork)
         services.machines.add(ssh)
         let (remoteWorkspace, remoteTab) = try Self.markedWorkspace(in: ssh.daemon.store, name: "lab work", reason: "Log in to GitHub")
         let (localWorkspace, localTab) = try Self.markedWorkspace(in: services.daemon.store, name: "coord", reason: "Confirm access",
                                                                       markedUnread: true)
         #expect(remoteTab.id == localTab.id && remoteTab !== localTab, "the two machines' tabs share an id")
         let notifications = services.notifications
+        #expect(notifications.interactionTarget(tabID: localTab.id, in: nil) == nil,
+                "an unresolved window fell back to the local tab with the same id")
+        let detached = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
+        #expect(notifications.interactionTarget(tabID: remoteTab.id, in: detached) == nil,
+                "an unowned window fell back to the local tab with the same id")
         #expect(notifications.attentionMarks(for: remoteWorkspace).count == 1, "the remote marked tab has no ring")
         notifications.interacted(.focus, tabID: remoteTab.id, in: remoteWorkspace, local: false)
         #expect(notifications.attentionMarks(for: remoteWorkspace).count == 1, "focus alone hid the ring")

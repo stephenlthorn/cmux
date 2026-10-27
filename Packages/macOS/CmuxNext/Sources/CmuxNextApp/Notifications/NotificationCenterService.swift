@@ -210,7 +210,9 @@ final class NotificationCenterService {
         lastKeystroke[tab] = .now
         // Workspace Mark as Unread belongs to this Mac; typing in another machine's terminal
         // must not clear a local mark whose tab id happens to be the same.
-        if isTerminalFocused(in: window), content(of: window)?.daemon.isLocal != false {
+        // Resolve the owning workspace before clearing a local mark. An unresolved or torn-off
+        // window must not fall back to this Mac's store when a remote tab reuses the same id.
+        if isTerminalFocused(in: window), let target = interactionTarget(tabID: tab, in: window), target.local {
             clearUnreadMark(ofTab: tab)
         }
         interacted(.keystroke, tabID: tab, in: window)
@@ -331,11 +333,10 @@ final class NotificationCenterService {
     }
 
     func interactionTarget(tabID: String, in window: NSWindow?) -> TabInteractionTarget? {
-        guard let services else { return nil }
-        let content = content(of: window)
-        let daemon = content?.daemon ?? services.daemon
+        guard let content = content(of: window) else { return nil }
+        let daemon = content.daemon
         guard let tab = daemon.store.tab(idOrResource: tabID),
-              content.map({ $0.workspace.screens.flatMap(\.panes).flatMap(\.tabs).contains { $0 === tab } }) ?? true else { return nil }
+              content.workspace.screens.flatMap(\.panes).flatMap(\.tabs).contains(where: { $0 === tab }) else { return nil }
         return TabInteractionTarget(tab: tab, store: daemon.store, local: daemon.isLocal)
     }
 
