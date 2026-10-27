@@ -164,6 +164,9 @@ test("physical-device signing rejects partial ASC credentials instead of changin
 test("tagged Debug API-key signing can retry without the App Group", () => {
   const allowed = fallbackAllowed("Debug", "asc-api-key", true);
   assert.equal(allowed.status, 0, allowed.stderr);
+  // An outside team's Xcode account can never get Manaflow's App Group ID.
+  const localAccount = fallbackAllowed("Debug", "xcode-account", true);
+  assert.equal(localAccount.status, 0, localAccount.stderr);
 
   for (const logBody of [
     "error: Provisioning profile \"iOS Team Provisioning Profile: dev.cmux.ios.fresh\" " +
@@ -215,8 +218,9 @@ test("tagged Debug API-key signing can retry without the App Group", () => {
 
 test("App Group fallback is narrow and preserves capable signing paths", () => {
   for (const [configuration, backend, provisioningUpdates] of [
-    ["Debug", "xcode-account", true],
+    ["Debug", "xcode-account", false],
     ["Debug", "asc-api-key", false],
+    ["Release", "xcode-account", true],
     ["Release", "asc-api-key", true],
     ["Profile", "asc-api-key", true],
     ["AppStore", "asc-api-key", true],

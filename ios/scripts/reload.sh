@@ -65,17 +65,20 @@ require_option_value() {
 
 # Fresh tagged bundle IDs signed with an App Store Connect API key can be
 # provisioned automatically, but ASC API-key auth cannot associate the concrete
-# group.dev.cmux.ios App Group with a newly-created App ID. Always try the full
-# Debug entitlements first so existing/pre-associated tags keep shared-container
-# push behavior. A retry without the App Group is allowed only for this exact
-# Debug + ASC API-key + provisioning-updates path.
+# group.dev.cmux.ios App Group with a newly-created App ID. A local Xcode
+# account on any team other than Manaflow's cannot get that group at all: App
+# Group IDs are globally unique, so an outside contributor's device build fails
+# the same way. Always try the full Debug entitlements first so
+# existing/pre-associated tags keep shared-container push behavior. A retry
+# without the App Group is allowed only for Debug + provisioning-updates
+# builds, and only after the App Group profile mismatch itself.
 cmux_ios_tagged_device_app_group_fallback_allowed() {
   local configuration="$1"
   local signing_backend="$2"
   local allow_provisioning_updates="$3"
 
   [[ "$configuration" == "Debug" \
-    && "$signing_backend" == "asc-api-key" \
+    && ( "$signing_backend" == "asc-api-key" || "$signing_backend" == "xcode-account" ) \
     && "$allow_provisioning_updates" == "1" ]]
 }
 
