@@ -103,7 +103,17 @@ public actor MobilePairedMacStore: MobilePairedMacPairingStoring {
         guard !didMigrate else { return }
         try runMigrations()
         if let importingLegacyDatabaseURL {
-            try importLegacyDatabase(at: importingLegacyDatabaseURL)
+            // The legacy file is a best-effort, one-time source. Rethrowing
+            // would fail every later store call, reading as a total loss of
+            // the saved Macs. The import marker stays unwritten, so the next
+            // launch retries it.
+            do {
+                try importLegacyDatabase(at: importingLegacyDatabaseURL)
+            } catch {
+                pairedMacStoreLog.error(
+                    "legacy paired-mac import failed; continuing without it: \(String(describing: error), privacy: .public)"
+                )
+            }
         }
         didMigrate = true
     }

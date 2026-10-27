@@ -70,4 +70,42 @@ import Testing
         let otherEnvironment = try MobilePairedMacStore(databaseURL: directory.appendingPathComponent("development.sqlite3"))
         #expect(try await otherEnvironment.loadAll().isEmpty)
     }
+
+    /// An older build that opened the store but never used it leaves a legacy
+    /// file with no `paired_macs` table: there is nothing to import.
+    @Test func legacyFileWithoutSavedComputersTableKeepsStoreUsable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacyURL = directory.appendingPathComponent("legacy.sqlite3")
+        _ = try MobilePairedMacStore(databaseURL: legacyURL)
+        try #require(FileManager.default.fileExists(atPath: legacyURL.path))
+
+        try await Self.expectUsableStore(at: directory.appendingPathComponent("v2.sqlite3"),
+                                         importingLegacyDatabaseURL: legacyURL)
+    }
+
+    /// A legacy file that cannot be read is skipped, not rethrown from every
+    /// later store call: that would read as losing every saved Computer.
+    @Test func unreadableLegacyFileKeepsStoreUsable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacyURL = directory.appendingPathComponent("legacy.sqlite3")
+        try Data(repeating: 0x5A, count: 8_192).write(to: legacyURL)
+
+        try await Self.expectUsableStore(at: directory.appendingPathComponent("v2.sqlite3"),
+                                         importingLegacyDatabaseURL: legacyURL)
+    }
+
+    private static func expectUsableStore(at databaseURL: URL, importingLegacyDatabaseURL legacyURL: URL) async throws {
+        let store = try MobilePairedMacStore(databaseURL: databaseURL, importingLegacyDatabaseURL: legacyURL)
+        #expect(try await store.loadAll().isEmpty)
+        try await store.upsert(macDeviceID: "mac", displayName: "Mac", routes: [],
+                               instanceTag: "internal", markActive: true,
+                               stackUserID: "alice", teamID: "team", now: Date())
+        #expect(try await store.loadAll().map(\.macDeviceID) == ["mac"])
+        let reopened = try MobilePairedMacStore(databaseURL: databaseURL, importingLegacyDatabaseURL: legacyURL)
+        #expect(try await reopened.loadAll().map(\.macDeviceID) == ["mac"])
+    }
 }

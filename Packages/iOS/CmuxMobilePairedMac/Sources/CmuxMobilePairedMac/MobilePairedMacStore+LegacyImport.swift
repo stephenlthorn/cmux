@@ -32,6 +32,12 @@ extension MobilePairedMacStore {
         defer { try? exec("DETACH DATABASE legacy_saved_macs;") }
 
         let columns = try legacyImportColumns(table: "paired_macs")
+        // An older build that opened the store but never used it left no
+        // paired_macs table: there is nothing to import, so finish the import.
+        guard !columns.isEmpty else {
+            try exec("INSERT INTO paired_mac_store_imports (source) VALUES ('legacy-local-v1');")
+            return
+        }
         guard columns.contains("mac_device_id") else {
             throw MobilePairedMacStoreError.decodeFailed
         }
