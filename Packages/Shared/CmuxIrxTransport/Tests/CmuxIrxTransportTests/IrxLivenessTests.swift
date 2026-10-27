@@ -137,6 +137,74 @@ struct IrxLivenessTests {
         await engine.stop()
     }
 
+    /// Field failure: after a 55-minute background the host had closed the
+    /// session on its 30-second idle timer, yet the phone kept it because its
+    /// own suspended QUIC stack had not noticed. Requests then timed out for
+    /// 20 seconds until the stream finally died.
+    @Test func longSuspensionWithUnansweredProbeReplacesTheSession() async throws {
+        let host = try await IrxLivenessTestHost.make(behavior: .ignoreFirstConnection)
+        defer { Task { await host.stop() } }
+        let clock = IrxLivenessTestClock()
+        let engine = IrxPeerEngine(config: .init(keepaliveInterval: .seconds(60)), journal: host.journal,
+            clockNow: { clock.now }) {
+            try await host.dial()
+        }
+        let first = try await engine.ensureSession(trigger: "test")
+        await engine.setApplicationActive(false)
+        clock.advance(by: .seconds(120))
+        await engine.setApplicationActive(true)
+        try await waitUntil {
+            guard let current = await engine.currentSession() else { return false }
+            return current.admit.session != first.admit.session
+        }
+        #expect(await host.connectionCount == 2)
+        #expect(await first.connection.isClosed)
+        #expect(host.journal.counterSnapshot()["foreground-session-retained", default: 0] == 0)
+        #expect(host.journal.counterSnapshot()["foreground-session-replaced", default: 0] == 1)
+        await engine.stop()
+    }
+
+    @Test func longSuspensionWithAnsweredProbeRetainsTheSession() async throws {
+        let host = try await IrxLivenessTestHost.make(behavior: .respond)
+        defer { Task { await host.stop() } }
+        let clock = IrxLivenessTestClock()
+        let engine = IrxPeerEngine(config: .init(keepaliveInterval: .seconds(60)), journal: host.journal,
+            clockNow: { clock.now }) {
+            try await host.dial()
+        }
+        let first = try await engine.ensureSession(trigger: "test")
+        await engine.setApplicationActive(false)
+        clock.advance(by: .seconds(120))
+        await engine.setApplicationActive(true)
+        try await waitUntil { host.journal.counterSnapshot()["foreground-session-retained", default: 0] > 0 }
+        #expect(await engine.currentSession()?.admit.session == first.admit.session)
+        #expect(await host.connectionCount == 1)
+        #expect(host.journal.counterSnapshot()["foreground-session-replaced", default: 0] == 0)
+        await engine.stop()
+    }
+
+    /// A slow link right after a short suspension keeps the admitted session:
+    /// the host's idle timer cannot have fired yet.
+    @Test func shortSuspensionWithUnansweredProbeRetainsTheSession() async throws {
+        let host = try await IrxLivenessTestHost.make(behavior: .ignoreFirstConnection)
+        defer { Task { await host.stop() } }
+        let clock = IrxLivenessTestClock()
+        let engine = IrxPeerEngine(config: .init(keepaliveInterval: .seconds(60)), journal: host.journal,
+            clockNow: { clock.now }) {
+            try await host.dial()
+        }
+        let first = try await engine.ensureSession(trigger: "test")
+        await engine.setApplicationActive(false)
+        clock.advance(by: .seconds(20))
+        await engine.setApplicationActive(true)
+        try await waitUntil { host.journal.counterSnapshot()["foreground-session-retained", default: 0] > 0 }
+        #expect(await engine.currentSession()?.admit.session == first.admit.session)
+        #expect(await host.connectionCount == 1)
+        #expect(await !first.connection.isClosed)
+        #expect(host.journal.counterSnapshot()["foreground-session-replaced", default: 0] == 0)
+        await engine.stop()
+    }
+
     @Test func terminalPeerCloseRemainsParkedAcrossForeground() async throws {
         let host = try await IrxLivenessTestHost.make(behavior: .respond)
         defer { Task { await host.stop() } }
@@ -177,6 +245,15 @@ struct IrxLivenessTests {
         #expect(await host.connectionCount == 1)
         await engine.stop()
     }
+}
+
+/// Real monotonic time plus simulated suspension, so engine deadlines still
+/// run on real time while the background span can be made long.
+private final class IrxLivenessTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var offset: Duration = .zero
+    var now: ContinuousClock.Instant { lock.withLock { ContinuousClock.now.advanced(by: offset) } }
+    func advance(by duration: Duration) { lock.withLock { offset += duration } }
 }
 
 private actor IrxLivenessTestHost {

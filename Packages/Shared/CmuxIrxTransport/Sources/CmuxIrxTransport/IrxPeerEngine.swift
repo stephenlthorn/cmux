@@ -49,19 +49,24 @@ public actor IrxPeerEngine {
         public var keepaliveInterval: Duration
         public var keepaliveDeadline: Duration
         public var foregroundProbeDeadline: Duration
+        /// A suspension at least this long, followed by an unanswered
+        /// foreground probe, replaces the session instead of retaining it.
+        public var hostIdleTimeout: Duration
 
         public init(
             initialBackoff: Duration = .milliseconds(400),
             maxBackoff: Duration = .seconds(5),
             keepaliveInterval: Duration = IrxProtocol().keepaliveInterval,
             keepaliveDeadline: Duration = IrxProtocol().keepaliveDeadline,
-            foregroundProbeDeadline: Duration = .milliseconds(400)
+            foregroundProbeDeadline: Duration = .milliseconds(400),
+            hostIdleTimeout: Duration = IrxProtocol().hostIdleTimeout
         ) {
             self.initialBackoff = initialBackoff
             self.maxBackoff = maxBackoff
             self.keepaliveInterval = keepaliveInterval
             self.keepaliveDeadline = keepaliveDeadline
             self.foregroundProbeDeadline = foregroundProbeDeadline
+            self.hostIdleTimeout = hostIdleTimeout
         }
     }
 
@@ -88,6 +93,12 @@ public actor IrxPeerEngine {
     private var foregroundTask: Task<Void, Never>?
     private var activityGeneration: UInt64 = 0
     private var applicationActive: Bool
+    /// Start of the suspension the next foreground recovery judges: the first
+    /// suspension since the current session was adopted or last judged, so a
+    /// recovery cut short by another suspension does not shorten it. Read on
+    /// `clockNow`, a continuous clock that keeps counting while the device
+    /// sleeps, as the host's idle timer does.
+    private var suspendedSince: ContinuousClock.Instant?
     private var hasConnectionIntent = false
     private var backoff: Duration
     private var parkedCode: String?
@@ -288,6 +299,7 @@ public actor IrxPeerEngine {
         if !active {
             redialTimer?.cancel()
             redialTimer = nil
+            if suspendedSince == nil { suspendedSince = clockNow() }
         }
         let connection = session?.connection
         await connection?.setApplicationActive(active)
@@ -298,6 +310,8 @@ public actor IrxPeerEngine {
     /// Samples the existing session on a fresh probe deadline after suspension.
     /// An unanswered probe leaves the native connection in place; application
     /// owners repair their streams without replacing the admitted session.
+    /// The exception is a suspension longer than the host's idle timeout: the
+    /// host has closed that session, so it is replaced at once.
     public func foregroundKick() {
         guard applicationActive, foregroundTask == nil, hasConnectionIntent, parkedCode == nil else { return }
         let generation = activityGeneration
@@ -320,16 +334,33 @@ public actor IrxPeerEngine {
             guard foregroundIsCurrent(generation), session?.admit.session == previous.admit.session else { return }
             let nativeClosed = await previous.connection.isConnectionClosed()
             guard foregroundIsCurrent(generation), session?.admit.session == previous.admit.session else { return }
+            let suspended = takeSuspension(at: started)
             if !nativeClosed {
-                record("foreground-session-retained", ["session": previous.admit.session,
-                    "probe_answered": String(probeAnswered),
-                    "elapsed": String(describing: started.duration(to: clockNow()))])
-                return
+                // Unanswered alone may be a slow or re-forming path, so the
+                // session stays. After a suspension past the host's idle
+                // timeout it is not: the suspended app sent nothing, the host
+                // closed the session, and this side's QUIC stack, suspended
+                // too, has not noticed yet.
+                guard !probeAnswered, suspended >= config.hostIdleTimeout else {
+                    record("foreground-session-retained", ["session": previous.admit.session,
+                        "probe_answered": String(probeAnswered),
+                        "suspended_s": String(suspended.components.seconds),
+                        "elapsed": String(describing: started.duration(to: clockNow()))])
+                    return
+                }
+                record("foreground-session-replaced", ["session": previous.admit.session,
+                    "suspended_s": String(suspended.components.seconds)])
+                // This path owns the death; the watcher would only race it.
+                terminationWatcher?.cancel()
+                terminationWatcher = nil
+                await previous.connection.close(code: .keepaliveTimeout, origin: .local)
+                await sessionDied(previous, viaKeepalive: true)
+            } else {
+                // Use the same reason classification as the native watcher. A
+                // terminal peer close must stay parked even if foreground wins
+                // the race to observe it.
+                await sessionDied(previous, viaKeepalive: false)
             }
-            // Use the same reason classification as the native watcher. A
-            // terminal peer close must stay parked even if foreground wins
-            // the race to observe it.
-            await sessionDied(previous, viaKeepalive: false)
         } else {
             guard foregroundIsCurrent(generation) else { return }
             // Foreground can bring a local transport retry forward, while a
@@ -346,6 +377,13 @@ public actor IrxPeerEngine {
         guard foregroundIsCurrent(generation) else { return }
         record("foreground-recovery-finished", ["elapsed": String(describing: started.duration(to: clockNow())),
             "state": Self.describe(state)])
+    }
+
+    /// Consumes the suspension one foreground recovery judges.
+    private func takeSuspension(at instant: ContinuousClock.Instant) -> Duration {
+        defer { suspendedSince = nil }
+        guard let suspendedSince else { return .zero }
+        return suspendedSince.duration(to: instant)
     }
 
     private func foregroundIsCurrent(_ generation: UInt64) -> Bool {
@@ -447,6 +485,8 @@ public actor IrxPeerEngine {
     private func adopt(_ established: IrxClientSession) {
         let previous = session
         session = established
+        // A new session has not been silent through any earlier suspension.
+        suspendedSince = applicationActive ? nil : clockNow()
         backoff = config.initialBackoff
         parkedCode = nil
         setState(.ready(session: established.admit.session))

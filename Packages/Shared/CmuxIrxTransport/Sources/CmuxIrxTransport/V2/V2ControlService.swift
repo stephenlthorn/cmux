@@ -37,6 +37,10 @@ public actor V2ControlService {
     var pendingReceipt: V2DeliveryReceipt?
     var pending: [String: Pending] = [:]
     var cooldowns: [String: Date] = [:]
+    /// Operation backoff armed because no control transport was usable, a
+    /// local condition rather than a server answer. The next ready control
+    /// session lifts it; server-owned entries in `cooldowns` stay.
+    var transportCooldowns: [String: Date] = [:]
     var retiredAttempts: [String: Int] = [:]
     var forceStackOnNextSetup = false
     /// Invalidates an in-flight enrollment when a newer revocation arrives.
@@ -355,7 +359,8 @@ public actor V2ControlService {
     }
 
     func checkCooldown(_ schema: String) throws {
-        let until = [cooldowns[schema], cooldowns[operation(schema)]].compactMap { $0 }.max()
+        let until = [cooldowns[schema], cooldowns[operation(schema)], transportCooldowns[operation(schema)]]
+            .compactMap { $0 }.max()
         if let until, until > dependencies.now() { throw V2ControlFailure.cooldown(schemaID: schema, until: until) }
     }
 

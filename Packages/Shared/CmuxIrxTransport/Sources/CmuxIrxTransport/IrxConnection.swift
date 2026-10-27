@@ -436,7 +436,9 @@ public actor IrxConnection {
     /// Tests the existing peer with a bounded ping/pong exchange. Concurrent
     /// callers share the current probe; a shorter caller deadline also retires
     /// that probe, so no caller retries a stopped receive stream.
-    /// A false result is inconclusive and never authorizes connection teardown.
+    /// A false result alone is inconclusive and never authorizes connection
+    /// teardown; the peer engine also needs a suspension longer than the
+    /// host's idle timeout before it replaces the session.
     public func probeLiveness(deadline: Duration = IrxProtocol().keepaliveDeadline) async -> Bool {
         guard applicationActive, !isClosed, !Task.isCancelled else { return false }
         if let task = probeTask, let id = probeID {

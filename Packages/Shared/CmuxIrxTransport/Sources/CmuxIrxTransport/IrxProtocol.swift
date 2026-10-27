@@ -18,6 +18,12 @@ public struct IrxProtocol: Sendable {
     public let keepaliveInterval: Duration = .seconds(5)
     /// A missed application pong retires only the diagnostic stream.
     public let keepaliveDeadline: Duration = .seconds(2)
+    /// How long the host keeps a connection that hears nothing from the
+    /// client: the native transport's negotiated idle timeout (pinned noq
+    /// default, not configurable through the FFI). A suspended app sends
+    /// nothing, so the host closes its session about this long after
+    /// suspension (field logs: about 35 s after entering background).
+    public let hostIdleTimeout: Duration = .seconds(30)
     /// How long a control-stream replacement may take to open a fresh stream
     /// and receive the host's acknowledgement. Generous next to the 2 s
     /// keepalive deadline because it includes opening the stream and a host

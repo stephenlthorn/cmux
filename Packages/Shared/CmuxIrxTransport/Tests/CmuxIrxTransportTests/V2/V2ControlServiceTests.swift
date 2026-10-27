@@ -75,6 +75,20 @@ private final class SleepRecorder: @unchecked Sendable {
         return []
     }
 
+    /// Polls a condition that background service work satisfies, bounded so a
+    /// regression fails instead of hanging.
+    private func eventually(
+        within limit: Duration = .seconds(10),
+        _ condition: @Sendable () async -> Bool
+    ) async throws -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            if await condition() { return true }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return await condition()
+    }
+
     private func ready(_ service: V2ControlService) async throws -> V2ControlSnapshot {
         let events = await service.events()
         for await snapshot in events {
@@ -499,5 +513,71 @@ private final class SleepRecorder: @unchecked Sendable {
         let retired = events(journal, "cooldown-set").first { $0.attributes["source"] == "upgrade_required" }
         #expect(retired?.attributes["schema"] == "relay.request.v1")
         #expect(Int(retired?.attributes["delay_s"] ?? "") ?? 0 >= 3600)
+    }
+
+    /// Field failure: on foreground the directory refresh ran over a control
+    /// socket that died while suspended and failed "unavailable". Its 24-36 s
+    /// cooldown then blocked the refresh after the socket was back two seconds
+    /// later, while a peer dial waited on that expired directory.
+    @Test func controlReconnectLiftsTheCooldownOfARefreshThatHadNoTransport() async throws {
+        let journal = IrxJournal(subsystem: "com.cmux.test", category: "v2-transport-cooldown-test")
+        let backend = V2TestBackend(now: now)
+        let service = try service(backend: backend, journal: journal)
+        await service.start()
+        _ = try await ready(service)
+        #expect(try await eventually {
+            let synced = await service.directorySyncTask == nil
+            let directory = await service.snapshot().cache.directory
+            return synced && directory != nil
+        })
+        let first = await backend.currentSocket()
+        // The network is not usable yet: socket sends and the HTTP fallback fail.
+        await first.failDirectorySends()
+        await backend.disableHTTP()
+        try await first.push(V2ChangedResponse(revision: 1, schemaID: .directoryChangedV1, teamID: "team"))
+        #expect(try await eventually {
+            let failed = events(journal, "refresh-failed").contains { $0.attributes["failure"] == "unavailable" }
+            let synced = await service.directorySyncTask == nil
+            return failed && synced
+        })
+        // A refresh refused by that cooldown sends nothing and must not
+        // replace it with one that outlives the reconnect.
+        try await first.push(V2ChangedResponse(revision: 1, schemaID: .directoryChangedV1, teamID: "team"))
+        #expect(try await eventually {
+            let refused = events(journal, "refresh-failed").contains { $0.attributes["failure"] == "cooldown" }
+            let synced = await service.directorySyncTask == nil
+            return refused && synced
+        })
+        await first.close()
+        let refreshedOnReconnect = try await eventually {
+            let sockets = await backend.sockets
+            guard sockets.count == 2 else { return false }
+            return await sockets[1].sentSchemas.contains("directory.request.v1")
+        }
+        #expect(refreshedOnReconnect, "directory refresh stayed blocked after the control socket reconnected")
+        await service.stop()
+    }
+
+    @Test func controlReconnectKeepsServerOwnedCooldowns() async throws {
+        let backend = V2TestBackend(now: now)
+        let service = try service(backend: backend)
+        await service.start()
+        _ = try await ready(service)
+        let first = await backend.currentSocket()
+        await first.rejectRelay(.rateLimited)
+        do {
+            _ = try await service.refreshRelayCredentials()
+            Issue.record("Expected relay rate limit")
+        } catch V2ControlFailure.server(let error) { #expect(error.code == .rateLimited) }
+        await first.close()
+        #expect(try await eventually {
+            guard await backend.sockets.count == 2 else { return false }
+            return await service.snapshot().status == .ready
+        })
+        do {
+            _ = try await service.refreshRelayCredentials()
+            Issue.record("Expected the server cooldown to survive the reconnect")
+        } catch V2ControlFailure.cooldown(let schema, _) { #expect(schema == "relay.request.v1") }
+        await service.stop()
     }
 }

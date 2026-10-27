@@ -24,6 +24,7 @@ actor V2TestSocket: V2ControlSocket {
     var directoryConflictStep: Int?
     var directoryRevisions: [Int?] = []
     var directoryRevision = 1
+    var failDirectoryRequests = false
     var suspendRegistration = false
     var deferredRegistration: String?
     var registrationObserved: CheckedContinuation<Void, Never>?
@@ -74,6 +75,7 @@ actor V2TestSocket: V2ControlSocket {
             }
             try relayReply(request)
         case "directory.request.v1":
+            if failDirectoryRequests { throw URLError(.networkConnectionLost) }
             if let step = directoryConflictStep {
                 let request = try JSONDecoder().decode(V2DirectoryRequest.self, from: data)
                 directoryRevisions.append(request.haveRevision)
@@ -141,6 +143,7 @@ actor V2TestSocket: V2ControlSocket {
 
     func changeDirectoryDuringPagination() { directoryConflictStep = 0; directoryRevisions = [] }
     func setDirectoryRevision(_ revision: Int) { directoryRevision = revision }
+    func failDirectorySends() { failDirectoryRequests = true }
 
     func rejectRelay(_ code: V2ErrorCode?) { rejectedRelay = code }
     func dropNextMetadataReply() { failNextMetadataReply = true }

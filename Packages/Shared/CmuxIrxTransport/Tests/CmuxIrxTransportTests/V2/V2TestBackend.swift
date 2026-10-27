@@ -6,6 +6,7 @@ actor V2TestBackend {
     var authorizations: [String] = []
     var sockets: [V2TestSocket] = []
     var failSockets = false
+    var failHTTP = false
     var httpRequests: [URLRequest] = []
     var enrolled: Bool
     let now: Int
@@ -41,6 +42,7 @@ actor V2TestBackend {
 
     func markEnrolled() { enrolled = true }
     func disableSockets() { failSockets = true }
+    func disableHTTP() { failHTTP = true }
     func currentSocket() -> V2TestSocket { sockets.last! }
     func waitForSocket() async -> V2TestSocket {
         if let socket = sockets.last { return socket }
@@ -48,6 +50,7 @@ actor V2TestBackend {
     }
 
     func http(_ request: URLRequest) async throws -> V2HTTPResponse {
+        if failHTTP { throw URLError(.notConnectedToInternet) }
         httpRequests.append(request)
         if request.url?.path == "/v2/control/session" {
             let setup = try JSONDecoder().decode(V2SocketSetup.self, from: request.httpBody!)

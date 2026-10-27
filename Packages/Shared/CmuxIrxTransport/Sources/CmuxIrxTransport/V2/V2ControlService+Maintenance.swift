@@ -182,7 +182,8 @@ extension V2ControlService {
     }
 
     private func due(_ timestamp: Int?, schema: String, now: TimeInterval) -> TimeInterval {
-        max(Double(timestamp ?? Int(now)), cooldowns[schema]?.timeIntervalSince1970 ?? 0, cooldowns[operation(schema)]?.timeIntervalSince1970 ?? 0)
+        max(Double(timestamp ?? Int(now)), cooldowns[schema]?.timeIntervalSince1970 ?? 0, cooldowns[operation(schema)]?.timeIntervalSince1970 ?? 0,
+            transportCooldowns[operation(schema)]?.timeIntervalSince1970 ?? 0)
     }
 
     /// Schemas whose next run is later than their own refresh time because a
@@ -210,7 +211,30 @@ extension V2ControlService {
         // The receive owner already records server cooldowns. Do not count one
         // rejected schema twice or overwrite its long backoff with a short one.
         if case .server = mapped {} else { record(mapped, schema: schema) }
+        // A cooldown refusal sent nothing. The cooldown that refused it already
+        // owns the next attempt; re-arming here would extend it and turn a
+        // transport backoff into one that outlives the reconnect.
+        if case .cooldown = mapped { return }
         let retry = dependencies.now().addingTimeInterval(30 * (0.8 + 0.4 * dependencies.jitter()))
-        cooldowns[operation(schema)] = max(cooldowns[operation(schema)] ?? retry, retry)
+        let key = operation(schema)
+        if mapped == .unavailable {
+            // No usable socket or HTTP route: back off while that lasts, but
+            // the next ready control session lifts it (acceptReady).
+            transportCooldowns[key] = max(transportCooldowns[key] ?? retry, retry)
+        } else {
+            cooldowns[key] = max(cooldowns[key] ?? retry, retry)
+        }
+    }
+
+    /// A ready control session proves a transport is back, so backoff armed
+    /// only because none was usable no longer applies. Server-owned cooldowns
+    /// (rate limits, rejections, timeouts) are untouched.
+    func liftTransportCooldowns() {
+        guard !transportCooldowns.isEmpty else { return }
+        journal("cooldown-lifted", [
+            "schemas": transportCooldowns.keys.sorted().joined(separator: ","),
+            "reason": "control-ready",
+        ])
+        transportCooldowns.removeAll()
     }
 }

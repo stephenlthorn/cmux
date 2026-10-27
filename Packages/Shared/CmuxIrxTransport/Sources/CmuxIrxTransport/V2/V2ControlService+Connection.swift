@@ -129,6 +129,7 @@ extension V2ControlService {
         status = .ready
         failure = nil
         journal("session-ready", ["http_mode": String(httpMode)])
+        liftTransportCooldowns()
         publish()
         requestDirectoryRefresh(run: run)
         scheduleMaintenance(run: run)
