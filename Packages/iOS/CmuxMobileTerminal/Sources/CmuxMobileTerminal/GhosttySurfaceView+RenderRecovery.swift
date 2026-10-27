@@ -294,6 +294,7 @@ extension GhosttySurfaceView {
         hasAppliedOutput = false
         surfaceHasReceivedOutput = false
         cellPixelSize = .zero
+        cellHitGrid.cellPixelSize = .zero
         lastRenderRect = .zero
         scaledGridRenderSize = nil
         gridDisplayScale = 1

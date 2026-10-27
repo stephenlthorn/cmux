@@ -765,6 +765,10 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
     /// cols×rows pin into a pixel box without re-round-tripping through
     /// Ghostty. Zero until the first layout has measured.
     var cellPixelSize: CGSize = .zero
+    /// libghostty's own cell size and padding, which a tap is mapped to a grid
+    /// cell with. `cellPixelSize` spreads the padding and the space left past
+    /// the last cell over the cells. Zero until the first layout has measured.
+    var cellHitGrid = TerminalCellHitGrid(cellPixelSize: .zero)
     /// 1 px separator stroke drawn around the pinned surface rect when the
     /// container is larger than the render target (i.e., this device is
     /// not the smallest). Added lazily on first letterbox.
@@ -3032,12 +3036,12 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
     /// Map a touch point to a grid cell (shared effective grid with the Mac), so
     /// alt-screen mouse-wheel reports at the cell under the finger.
     private func scrollCell(at point: CGPoint) -> (col: Int, row: Int) {
-        let scale = max(preferredScreenScale, 1)
-        let cellW = max(cellPixelSize.width / scale * gridDisplayScale, 1)
-        let cellH = max(cellPixelSize.height / scale * gridDisplayScale, 1)
-        let col = max(0, Int((point.x - lastRenderRect.minX) / cellW))
-        let row = max(0, Int((point.y - lastRenderRect.minY) / cellH))
-        return (col, row)
+        cellHitGrid.cell(
+            at: point,
+            gridOrigin: lastRenderRect.origin,
+            scale: preferredScreenScale,
+            displayScale: gridDisplayScale
+        )
     }
 
     @discardableResult
@@ -5602,6 +5606,11 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
         /// update cannot move the layer a second time before the pass settles.
         let viewportSnapshot: TerminalViewportSnapshot
         let cellPixelSize: CGSize
+        /// libghostty's own cell size in device pixels, for mapping taps.
+        let hitCellPixelSize: CGSize
+        /// The grid's window padding in points, or nil when libghostty's grid
+        /// metrics were behind a resize still pending in this pass.
+        let gridPadding: CGSize?
         let naturalSize: TerminalGridSize
         /// Pinned render size in points when letterboxed to an effective
         /// grid; nil means fill the container.
@@ -5780,6 +5789,11 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
                 columns: Int(finalMeasured.columns),
                 rows: Int(finalMeasured.rows)
             )
+            var gridMetrics = ghostty_surface_grid_metrics_s()
+            let gridPadding = ghostty_surface_grid_metrics(surface, &gridMetrics)
+                && gridMetrics.padding_left.isFinite && gridMetrics.padding_top.isFinite
+                ? CGSize(width: gridMetrics.padding_left, height: gridMetrics.padding_top)
+                : nil
             let natural = TerminalGridSize(
                 columns: Int(measured.columns),
                 rows: Int(measured.rows),
@@ -5789,6 +5803,11 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
             let result = GeometryResult(
                 viewportSnapshot: snapshot,
                 cellPixelSize: cell,
+                hitCellPixelSize: CGSize(
+                    width: CGFloat(finalMeasured.cell_width_px),
+                    height: CGFloat(finalMeasured.cell_height_px)
+                ),
+                gridPadding: gridPadding,
                 naturalSize: natural,
                 pinnedSize: pinnedSize,
                 scaledToFit: scaledToFit,
@@ -5830,6 +5849,14 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
     ) {
         if result.cellPixelSize.width > 0, result.cellPixelSize.height > 0 {
             cellPixelSize = result.cellPixelSize
+        }
+        if result.hitCellPixelSize.width > 0, result.hitCellPixelSize.height > 0 {
+            // Padding follows only the config and the screen scale, so a pass
+            // whose metrics lagged a pending resize keeps the last one.
+            cellHitGrid = TerminalCellHitGrid(
+                cellPixelSize: result.hitCellPixelSize,
+                padding: result.gridPadding ?? cellHitGrid.padding
+            )
         }
         // Size the render layer to the EXACT pixel size libghostty rendered
         // (grid-aligned: cols×cellW × rows×cellH), not the raw container. The
