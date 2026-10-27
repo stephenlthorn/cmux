@@ -6005,14 +6005,17 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
         // phone keeps its exact unscaled bounds (the drawable's size, which
         // the present path compares against) under a scale transform.
         let placement = rendererLayerPlacement(displayRect: renderRect)
+        // libghostty truncates bounds * scale for its IOSurface while the
+        // verified replay fence rounds; whole-pixel bounds keep them equal.
+        let boundsSize = TerminalLetterboxGeometry.pixelAlignedSize(placement.boundsSize, scale: scale)
         for sublayer in layer.sublayers ?? [] where isGhosttyRendererLayer(sublayer) {
             if !CATransform3DEqualToTransform(sublayer.transform, placement.transform) {
                 geometryChanged = true
                 sublayer.transform = placement.transform
             }
-            if sublayer.bounds != CGRect(origin: .zero, size: placement.boundsSize) {
+            if sublayer.bounds != CGRect(origin: .zero, size: boundsSize) {
                 geometryChanged = true
-                sublayer.bounds = CGRect(origin: .zero, size: placement.boundsSize)
+                sublayer.bounds = CGRect(origin: .zero, size: boundsSize)
             }
             let position = CGPoint(
                 x: renderRect.minX + renderRect.width * sublayer.anchorPoint.x,
@@ -6028,7 +6031,7 @@ public final class GhosttySurfaceView: UIView, TerminalSurfaceHosting {
             sublayer.contentsScale = scale
             applyScrollEdgeBandClip(
                 to: sublayer,
-                boundsSize: placement.boundsSize,
+                boundsSize: boundsSize,
                 gridRenderRect: gridRenderRect,
                 viewportRect: viewportRect
             )

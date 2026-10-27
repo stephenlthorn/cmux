@@ -235,6 +235,28 @@ public struct TerminalLetterboxGeometry {
         )
     }
 
+    /// Snaps a renderer-layer size to whole device pixels.
+    ///
+    /// The layer is the grid box plus the scroll-edge bands, each already
+    /// `px / scale`, but their sum in points can land one ULP under the
+    /// whole pixel count (`1249/3 + 120 + 128` times 3 is
+    /// 1992.9999999999998). libghostty sizes its IOSurface by truncating
+    /// `bounds * contentsScale` while the verified replay fence rounds, so
+    /// the two disagreed by one pixel and every replay frame was rejected.
+    /// One division of a whole pixel count keeps `size * scale` exact.
+    ///
+    /// - Parameters:
+    ///   - size: The layer size in points.
+    ///   - scale: The layer's contents scale.
+    /// - Returns: The size whose pixel extent is a whole number on both axes.
+    public static func pixelAlignedSize(_ size: CGSize, scale: CGFloat) -> CGSize {
+        guard scale > 0 else { return size }
+        return CGSize(
+            width: (size.width * scale).rounded() / scale,
+            height: (size.height * scale).rounded() / scale
+        )
+    }
+
     /// Where a render of `renderSize` sits in the viewport.
     ///
     /// A grid at least one row shorter than the viewport (a shared grid

@@ -356,4 +356,45 @@ struct TerminalLetterboxGeometryTests {
         )
         #expect(clamped == CGSize(width: 402, height: 700))
     }
+
+    @Test("a pinned grid plus scroll-edge bands keeps an exact pixel extent")
+    func pinnedLayerWithBandsIsPixelExact() {
+        // iPhone 17 Pro Max under a 72x35 shared grid: 35 rows of 35 px plus
+        // the 24 px remainder, inside 120 pt + 128 pt scroll-edge bands. The
+        // point sum lands one ULP under 1993 px, so libghostty's truncated
+        // IOSurface (1992) missed the verified replay's rounded extent (1993)
+        // and every replay frame was rejected.
+        let scale: CGFloat = 3
+        let pinned = TerminalLetterboxGeometry.clampPinnedSize(
+            actualWidthPx: 1320, actualHeightPx: 1249, scale: scale,
+            container: CGSize(width: 440, height: 708)
+        )
+        let layer = CGSize(width: pinned.width, height: (pinned.height + 120) + 128)
+
+        let aligned = TerminalLetterboxGeometry.pixelAlignedSize(layer, scale: scale)
+
+        #expect(aligned.width * scale == 1320)
+        #expect(aligned.height * scale == 1993)
+        #expect((aligned.height * scale).rounded(.towardZero) == (aligned.height * scale).rounded())
+    }
+
+    @Test("every pinned row count truncates and rounds to the same pixel extent", arguments: 1...60)
+    func pinnedRowCountsArePixelExact(rows: Int) {
+        let scale: CGFloat = 3
+        let gridHeight = CGFloat(35 * rows + 24) / scale
+        let layer = CGSize(width: 440, height: (gridHeight + 120) + 128)
+
+        let pixels = TerminalLetterboxGeometry.pixelAlignedSize(layer, scale: scale).height * scale
+
+        #expect(pixels.rounded(.towardZero) == pixels.rounded())
+        #expect(Int(pixels) == 35 * rows + 24 + 360 + 384)
+    }
+
+    @Test("pixel alignment leaves whole-pixel sizes and a zero scale unchanged")
+    func pixelAlignmentIsIdempotent() {
+        let size = CGSize(width: 440, height: 956)
+        #expect(TerminalLetterboxGeometry.pixelAlignedSize(size, scale: 3) == size)
+        #expect(TerminalLetterboxGeometry.pixelAlignedSize(CGSize(width: 1.5, height: 2.25), scale: 0)
+            == CGSize(width: 1.5, height: 2.25))
+    }
 }
