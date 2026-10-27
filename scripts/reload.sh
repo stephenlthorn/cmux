@@ -7,6 +7,8 @@ RELOAD_ORIGINAL_ARGS=("$@")
 source "$SCRIPT_DIR/lib/mobile-attach.sh"
 # shellcheck source=scripts/lib/dev-secrets.sh
 source "$SCRIPT_DIR/lib/dev-secrets.sh"
+# shellcheck source=scripts/lib/swiftpm-resource-bundles.sh
+source "$SCRIPT_DIR/lib/swiftpm-resource-bundles.sh"
 
 APP_NAME="cmux DEV"
 BUNDLE_ID="com.cmuxterm.app.debug"
@@ -2134,6 +2136,9 @@ else
   "$PWD/scripts/install-cmux-tui-client.sh" "${cmux_tui_install_args[@]}"
 fi
 "$PWD/scripts/install-coderouter-client.sh" "$APP_PATH"
+# Xcode copies package resource bundles after the bundled-resources build
+# phase, which therefore links none beside the CLI on a fresh build.
+cmux_link_cli_resource_bundles "$APP_PATH/Contents/Resources"
 if command -v xattr >/dev/null 2>&1; then
   xattr -cr "$APP_PATH" || true
 fi
