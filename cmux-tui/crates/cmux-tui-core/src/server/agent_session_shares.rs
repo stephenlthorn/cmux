@@ -16,8 +16,8 @@
 //! expiry is one one-shot timer to the next `expires_at` (no polling).
 //!
 //! With a hosted room configured (`agent_session_share_room.rs`), create provisions the share in
-//! the room first (`provisioning` until it answers) and answers the guest link; a revoke also
-//! goes to the room (`pending_room_ops`, retried until acknowledged). Without one a share is
+//! the room first (`provisioning` until it answers) and answers the guest link; a revoke or kick
+//! also goes to the room (`pending_room_ops`, retried until acknowledged). Without one a share is
 //! `active` from its create and `url` is null.
 
 use std::path::Path;
@@ -477,6 +477,7 @@ impl LinkShares {
     fn end(&self, directory: Option<&Path>, p: &Named) -> Result<Value, &'static str> {
         self.with(directory, |shares, _| {
             let share = find(shares, &p.share_id)?;
+            let room_hears = share.room.is_some() && share.live().is_ok();
             let Some(guest_id) = &p.guest_id else {
                 let changed = share.state != ShareState::Revoked;
                 share.state = ShareState::Revoked;
@@ -489,6 +490,9 @@ impl LinkShares {
                 share.guests.iter_mut().find(|g| &g.guest_id == guest_id).ok_or("share.unknown")?;
             let changed = guest.state != GuestState::Kicked;
             guest.state = GuestState::Kicked;
+            if changed && room_hears {
+                share.pending_room_ops.push(json!({"op": "kick", "guest_id": guest_id}));
+            }
             Ok((
                 json!({"share_id": share.share_id, "guest_id": guest_id, "state": guest.state}),
                 changed,
