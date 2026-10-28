@@ -9,6 +9,7 @@ import "./markdownField.css";
 import { followScrollEdges } from "./summary/scrollEdges";
 import {
   inlineAttachmentNode,
+  inlineIds,
   inlinePlugin,
   inlinePositions,
   insertInline,
@@ -16,6 +17,7 @@ import {
   placeTokensIn,
   removeInline,
   sliceHoldsInline,
+  withTextMarksEscaped,
 } from "./composer/inlineNode";
 import { followActionsWidth } from "./composerScrollLane";
 import { MINIMAL_SCROLLER_ATTRIBUTE, followShownScrollerFade } from "../../scrollers";
@@ -28,6 +30,7 @@ import {
   remarkCtx,
   remarkStringifyOptionsCtx,
   rootCtx,
+  serializerCtx,
 } from "@milkdown/kit/core";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
@@ -101,6 +104,9 @@ export type MarkdownFieldHandle = {
   openInline(id: string, text: string): boolean;
   /// Puts the attachments placed in the text in `ids`' order, each place in the text kept.
   orderInline(ids: readonly string[]): void;
+  /// The ids of the attachments placed in the text, from its nodes alone (text shaped like a token
+  /// is text), in order, each once; undefined before the editor is made.
+  inlineIds(): string[] | undefined;
 };
 
 export type PlainPrompt = { value: string; selectionStart: number; selectionEnd: number };
@@ -321,9 +327,16 @@ const isReturnKey = (event: KeyboardEvent) =>
 /// by the same band (composer/attachmentIntake.tsx).
 export const FADE_BAND_PX = 18;
 
-/** The document as the prompt's markdown, keeping the spaces typed at its end. */
-function promptMarkdown(editor: Editor | undefined, view: EditorView): string {
-  const markdown = clean(editor?.action(getMarkdown()) ?? "");
+/** The document as the prompt's markdown, keeping the spaces typed at its end. A field with placed
+ * attachments writes the person's own text shaped like a token escaped (composer/inlineNode.ts
+ * withTextMarksEscaped): only its nodes write tokens. */
+function promptMarkdown(editor: Editor | undefined, view: EditorView, inline: boolean): string {
+  const escaped = inline ? withTextMarksEscaped(view.state.doc) : view.state.doc;
+  const written =
+    escaped === view.state.doc
+      ? editor?.action(getMarkdown())
+      : editor?.action((ctx) => ctx.get(serializerCtx)(escaped));
+  const markdown = clean(written ?? "");
   const tail = trailingSpaces(view);
   return tail && !markdown.endsWith(tail) ? markdown + tail : markdown;
 }
@@ -716,7 +729,7 @@ const MarkdownFieldImpl = React.forwardRef<MarkdownFieldHandle, MarkdownFieldPro
               // Before the editor is made there is nothing to write the document with (it would read
               // as an empty prompt and wipe the draft); the document made is `known` then.
               if (!editor.current) return;
-              const markdown = promptMarkdown(editor.current, next);
+              const markdown = promptMarkdown(editor.current, next, inlineOn.current);
               showPlaceholder(markdown);
               // A value applied from outside comes back unchanged: not the user's edit.
               if (markdown === known.current) return;
@@ -1072,6 +1085,7 @@ const MarkdownFieldImpl = React.forwardRef<MarkdownFieldHandle, MarkdownFieldPro
           if (view.current) removeInline(view.current, id);
         },
         openInline: (id, text) => (view.current ? openInline(view.current, id, text) : false),
+        inlineIds: () => (view.current ? inlineIds(view.current.state.doc) : undefined),
         orderInline: (ids) => {
           if (view.current) orderInline(view.current, ids);
         },
