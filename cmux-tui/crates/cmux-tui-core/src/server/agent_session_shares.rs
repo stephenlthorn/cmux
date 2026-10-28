@@ -741,6 +741,13 @@ pub(super) fn guest_author(mux: &Arc<Mux>, link: Value) -> Result<Value, Refusal
     found.map(|(_, _, author)| author).map_err(|_| Refusal::ShareEnded)
 }
 
+/// The acpmux prompt id of a guest's prompt: `g-` and 22 characters of base64url SHA-256 of the
+/// share, the guest and the prompt's `client_id`.
+fn guest_prompt_id(share_id: &str, guest_id: &str, client_id: &str) -> String {
+    let hash = digest(&[share_id, guest_id, client_id]);
+    format!("g-{}", &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash)[..22])
+}
+
 /// A bound guest's frame: its share and guest are still live, it names no other author or chat,
 /// and it goes to the surface that shows the share's chat (whatever surface it named). A prompt's
 /// id is `g-` and 22 characters of base64url SHA-256 of the share, the guest and the frame's
@@ -774,9 +781,7 @@ pub(super) fn check_guest(
         let client_id = object.remove("client_id");
         let client_id = client_id.as_ref().and_then(Value::as_str).filter(|c| valid_id(c));
         let Some(client_id) = client_id else { return Err(Refusal::BadRequest) };
-        let hash = digest(&[share_id, guest_id, client_id]);
-        let prompt_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
-        object.insert("prompt_id".into(), json!(format!("g-{}", &prompt_id[..22])));
+        object.insert("prompt_id".into(), json!(guest_prompt_id(share_id, guest_id, client_id)));
     }
     if cmd == "agent-session-detach" {
         // This connection's attachment to the shared chat, on whatever surface it resolved to
