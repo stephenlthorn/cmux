@@ -85,6 +85,11 @@ public actor IrxControlPlaneClient {
     private let tokenPair: @Sendable () async throws -> (access: String, refresh: String)?
     private let journal: IrxJournal
     private let handlers: Handlers
+    /// Bound on the steps before the first frame can arrive (token pair and
+    /// hello send). Neither had a deadline, so one that never answered left
+    /// the loop parked after `reconnect-scheduled` with no socket and no
+    /// retry: on 2026-10-27 a Mac sat unreachable for 64 minutes that way.
+    private let setupTimeout: Duration
     private let cursorCache: IrxDiskCache<IrxControlPlaneCursor>
     /// JSONDecoder is mutable and therefore stays isolated to this actor.
     /// Reusing the instance avoids rebuilding ISO-8601 formatters for every
@@ -152,26 +157,41 @@ public actor IrxControlPlaneClient {
     /// connection, so bound it and let `run()` own reconnect/backoff.
     private static let receiveTimeout: Duration = .seconds(90)
 
-    private struct ReceiveTimeout: Error, Sendable {}
-
     private func receive(
         from task: URLSessionWebSocketTask
     ) async throws -> URLSessionWebSocketTask.Message {
-        do {
-            return try await withThrowingTaskGroup(
-                of: URLSessionWebSocketTask.Message.self
-            ) { group in
-                group.addTask { try await task.receive() }
-                group.addTask {
-                    try await Task.sleep(for: Self.receiveTimeout)
-                    throw ReceiveTimeout()
-                }
-                defer { group.cancelAll() }
-                return try await group.next()!
-            }
-        } catch is ReceiveTimeout {
+        // withIrxDeadlineResult, not a task group: receive() ignores Swift
+        // cancellation and leaving a group waits for every child, so a group
+        // "timeout" still parked the loop forever (2026-10-27, twice).
+        // Cancelling the socket is what ends the abandoned receive.
+        switch try await withIrxDeadlineResult(Self.receiveTimeout, operation: { try await task.receive() }) {
+        case .operation(let message?):
+            return message
+        case .operation(nil):
+            throw IrxConnectionError.closed(nil)
+        case .timeout:
             task.cancel(with: .goingAway, reason: nil)
             journal.record("control-plane", "receive-timeout")
+            throw IrxConnectionError.closed(nil)
+        }
+    }
+
+    /// Runs one pre-hello step under ``setupTimeout``. Neither the token fetch
+    /// nor the hello send had a deadline, so one that never answered left the
+    /// loop parked after `reconnect-scheduled`. A step that outlives the limit
+    /// is journaled, `onTimeout` releases what it is blocked on, and it
+    /// surfaces as a closed connection so `run()` owns the retry.
+    private func bounded<T: Sendable>(
+        _ phase: String,
+        onTimeout: @escaping @Sendable () -> Void = {},
+        _ operation: @escaping @Sendable () async throws -> T?
+    ) async throws -> T? {
+        switch try await withIrxDeadlineResult(setupTimeout, operation: operation) {
+        case .operation(let value):
+            return value
+        case .timeout:
+            onTimeout()
+            journal.record("control-plane", "setup-timeout", ["phase": phase])
             throw IrxConnectionError.closed(nil)
         }
     }
@@ -218,12 +238,14 @@ public actor IrxControlPlaneClient {
         configuration: Configuration,
         tokenPair: @escaping @Sendable () async throws -> (access: String, refresh: String)?,
         handlers: Handlers,
-        journal: IrxJournal
+        journal: IrxJournal,
+        setupTimeout: Duration = .seconds(30)
     ) {
         self.configuration = configuration
         self.tokenPair = tokenPair
         self.handlers = handlers
         self.journal = journal
+        self.setupTimeout = setupTimeout
         decoder = Self.makeDecoder()
         cursorCache = IrxDiskCache(
             fileURL: configuration.cacheDirectory
@@ -316,7 +338,8 @@ public actor IrxControlPlaneClient {
     }
 
     private func connectAndServe(generation: UInt64) async throws {
-        guard let tokens = try await tokenPair() else {
+        let tokenPair = tokenPair
+        guard let tokens = try await bounded("token-pair", { try await tokenPair() }) else {
             throw IrxConnectionError.closed(nil)
         }
         guard generation == loopGeneration, !Task.isCancelled else {
@@ -354,8 +377,11 @@ public actor IrxControlPlaneClient {
             clientInfo: configuration.clientInfo
         )
         let helloData = try JSONEncoder().encode(hello)
+        let helloText = String(decoding: helloData, as: UTF8.self)
         do {
-            try await task.send(.string(String(decoding: helloData, as: UTF8.self)))
+            try await bounded("hello-send", onTimeout: { task.cancel(with: .goingAway, reason: nil) }) {
+                try await task.send(.string(helloText))
+            }
         } catch {
             throw Self.rateLimitError(from: task) ?? error
         }
