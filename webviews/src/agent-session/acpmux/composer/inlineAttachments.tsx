@@ -49,6 +49,10 @@ export function useInlineAttachments(options: Options) {
   /// attachment to draw, so they leave the text again. One the host puts back (a refusal, Edit on a
   /// failed prompt) is the composer's again.
   const sentIds = useRef(new Set<string>());
+  /// From a send until its clear is done (the same task): the clear takes the text's nodes out, and a
+  /// file among them still uploading is not sent (useSendWhenAttached) but stays for the next prompt,
+  /// never cancelled. Only the person's own edit cancels one (review of #26667).
+  const clearing = useRef(false);
   useLayoutEffect(() => {
     removed.current.clear();
     placed.current.clear();
@@ -139,7 +143,8 @@ export function useInlineAttachments(options: Options) {
       const gone = new Set(was.filter((id) => !kept.has(id)));
       const came = now.filter((id) => !had.has(id));
       const { setAttachments, attachmentsRef, pending, cancel } = live.current;
-      for (const id of gone) if (placed.current.delete(id) || pending.some((chip) => chip.id === id)) cancel(id);
+      if (!clearing.current)
+        for (const id of gone) if (placed.current.delete(id) || pending.some((chip) => chip.id === id)) cancel(id);
       for (const attachment of attachmentsRef.current) if (gone.has(attachment.id)) keep(attachment);
       const update = (current: ComposerAttachment[]) => {
         let next = gone.size ? current.filter((attachment) => !gone.has(attachment.id)) : current;
@@ -180,13 +185,18 @@ export function useInlineAttachments(options: Options) {
       if (inText.size > 1)
         field.current?.orderInline(next.filter((each) => inText.has(each.id)).map((each) => each.id));
     },
-    /// The attachments sent with a prompt are gone for good: no undo brings them back.
+    /// The attachments sent with a prompt are gone for good: no undo brings them back. The send's
+    /// clear follows in the same task (Composer.tsx `clear`).
     sent(ids: Iterable<string>) {
       for (const id of ids) {
         removed.current.delete(id);
         placed.current.delete(id);
         sentIds.current.add(id);
       }
+      clearing.current = true;
+      queueMicrotask(() => {
+        clearing.current = false;
+      });
     },
     known,
     /// The field tells its nodes' elements in a microtask after the change that made them (MarkdownField
