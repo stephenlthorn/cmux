@@ -73,6 +73,9 @@ impl Hub {
         };
         if let Err(e) = write() {
             tracing::warn!(peer = %peer, "saving the peer's last-known sessions failed: {e}");
+        } else {
+            p.cache_saved_outage
+                .store(saved.down_since.is_some(), std::sync::atomic::Ordering::SeqCst);
         }
         drop(leases);
     }
@@ -86,6 +89,8 @@ impl Hub {
         let Ok(saved) = serde_json::from_slice::<Saved>(&bytes) else { return };
         peer.seed_last_seen(saved.last_seen);
         peer.seed_outage(saved.down_since);
+        peer.cache_saved_outage
+            .store(saved.down_since.is_some(), std::sync::atomic::Ordering::SeqCst);
         let mut map = self.remote_sessions.lock().unwrap_or_else(|e| e.into_inner());
         if map.values().any(|r| r.peer == peer.name) {
             return;
