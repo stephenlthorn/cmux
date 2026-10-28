@@ -233,6 +233,20 @@ public struct PhonePushKeyMaterial: Sendable {
 
 extension PhonePushKeyMaterial {
     public static func current(bundleID: String, accessGroup: String? = nil) throws -> PhonePushKeyMaterial {
+        #if os(macOS)
+        // Never let this lookup put up a keychain dialog. It runs while a phone
+        // request is being answered (on the main actor), and a rebuilt app with
+        // a new code signature no longer matches the item's ACL, so macOS shows
+        // "wants to use your confidential information" and SecItemCopyMatching
+        // blocks until someone at the Mac answers it. On 2026-10-27 that left
+        // the Mac app frozen overnight: the phone listed tabs but no terminal
+        // ever loaded. kSecUseAuthenticationUIFail does not suppress this
+        // legacy-keychain ACL prompt (verified); this switch does, failing in
+        // milliseconds instead. Losing push key material only disables
+        // notifications; a frozen app loses everything.
+        SecKeychainSetUserInteractionAllowed(false)
+        defer { SecKeychainSetUserInteractionAllowed(true) }
+        #endif
         let service = "ai.manaflow.cmux.phone-push.\(bundleID)"
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
