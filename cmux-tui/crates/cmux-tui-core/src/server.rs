@@ -137,6 +137,8 @@ pub use agent_session_attach::{
     AgentStartHost, AgentStartHostSource, start_link_share_bridge,
 };
 #[cfg(unix)]
+pub(crate) use agent_session_attach::close_chat_shares;
+#[cfg(unix)]
 pub mod agent_transfer;
 mod app_trust;
 pub use app_trust::{FrontendKey, frontend_proof, install_frontend_key, read_frontend_key};
