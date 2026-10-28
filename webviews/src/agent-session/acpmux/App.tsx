@@ -165,6 +165,7 @@ import type { QuestionReply } from "./question/model";
 import { agentName } from "./agents";
 import { type Translate, translate, useT } from "./i18n";
 import { PeerCopyBanner } from "./PeerCopyBanner";
+import { usePeerCloudMachine } from "./peerCloudMachine";
 import { useFolderTrustAsk } from "./useFolderTrustAsk";
 import { heldPrompts } from "./heldPrompt";
 import { StartingSends, type StartingSend } from "./startingSends";
@@ -369,6 +370,7 @@ import { configureToolRunLook } from "./toolRunLook";
 import { configureSentLook } from "./conversation/SentMessageLine";
 import { configureNativeSidebarPreviewVariant, configureSidebarPreviewVariant } from "./sidebarPreview";
 import { cloudCredentialRecovery } from "./cloudCredentialRecovery";
+import { handoffTurns } from "./cloudHandoffTurn";
 import { configureTurnActionsPlacement } from "./turnActionsPlacement";
 import { archiveRow, markUnreadRow } from "./header/archiveRow";
 import { avatarRows } from "./header/avatarRow";
@@ -2214,7 +2216,11 @@ export function VirtualTranscript({
     // reader's latest state; React work itself is coalesced by scrollPacer.
     followingRef.current = atLatest;
     onFollowingChange?.(atLatest);
-    scrollRef.current = { top, delta: top - scrollRef.current.top };
+    // The pacer may already have committed this offset (a frame-driven scroll moves it before its
+    // event comes): an event that brings no new offset keeps the direction the scroll has. Its delta
+    // of 0 left the next render no lead, and a fling painted blank frames (transcript-fling on the
+    // CI runner, mounted rows a step behind the view).
+    scrollRef.current = { top, delta: top - scrollRef.current.top || scrollRef.current.delta };
     scrollPacer.current!.enqueue({ top, atLatest });
   };
   useEffect(() => {
@@ -4593,6 +4599,12 @@ function AcpmuxPane() {
         catalog,
       ),
     [clientSnapshot, switchView, catalog],
+  );
+  // The chat's Cloud machine while it does not answer: paused offers Resume, starting spins.
+  // An ssh peer is never an account's Cloud machine, whatever its name.
+  const offlinePeer = snapshot.peerCopy?.offline ? snapshot.peerCopy.peer : undefined;
+  const peerMachine = usePeerCloudMachine(
+    offlinePeer && snapshot.peerKinds?.[offlinePeer] !== "ssh" ? offlinePeer : undefined,
   );
   useEffect(() => setMinimapVisible(true), [snapshot.sessionId]);
   // The person's own queued prompts: another agent's message never draws in the composer's queue.
@@ -7182,6 +7194,8 @@ function AcpmuxPane() {
           machineName?: unknown;
           cloudMachineID?: unknown;
           cloudCredentialRecoveryAvailable?: unknown;
+          /// The app opens a Cloud chat's hand-off turns (`cloud.handoffTurn`, cloudHandoffTurn.ts).
+          cloudHandoffs?: unknown;
           githubRepository?: unknown;
           harnesses?: unknown;
           sandboxState?: unknown;
@@ -7360,6 +7374,9 @@ function AcpmuxPane() {
           return;
         }
         directClient.current = client;
+        // A chat on a Cloud machine names the hand-off turn the app opens for each prompt that starts
+        // one, so the machine's reports reach the hand-off (cloudHandoffTurn.ts). Mock pages have none.
+        if (!mock) client.handoffTurn = handoffTurns(callNative, host);
         setClientEpoch((epoch) => epoch + 1);
         // The minimap's prompt bookmarks live in acpmux's session (threadMinimap/bookmarks.ts).
         setBookmarkTransport({
@@ -10146,7 +10163,9 @@ function AcpmuxPane() {
                     onChoose={(choice) => void callNative("chat.adoptLive", { choice }).catch(() => undefined)}
                   />
                 )}
-                {snapshot.peerCopy?.offline && <PeerCopyBanner copy={snapshot.peerCopy} />}
+                {snapshot.peerCopy?.offline && (
+                  <PeerCopyBanner copy={snapshot.peerCopy} machine={peerMachine.state} onResume={peerMachine.resume} />
+                )}
                 {snapshot.summary?.watching && !snapshot.liveTakeOver && (
                   <WatchBanner
                     family={snapshot.summary.watching}
