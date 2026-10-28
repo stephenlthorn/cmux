@@ -143,6 +143,8 @@ pub struct Peer {
     attached: StdMutex<HashSet<String>>,
     notices: mpsc::Sender<(String, u64, PeerNotice)>,
     stop: AtomicBool,
+    /// A replacement requested now attempts immediately, even if its cache is parked.
+    retry_immediately: AtomicBool,
     /// Wakes `serve` so `stop` closes the live connection.
     stop_signal: Notify,
     /// Counts connect attempts that settled (ready or failed), bumped by the
@@ -213,6 +215,7 @@ impl Peer {
             attached: StdMutex::new(HashSet::new()),
             notices,
             stop: AtomicBool::new(false),
+            retry_immediately: AtomicBool::new(false),
             stop_signal: Notify::new(),
             settled: tokio::sync::watch::channel(0).0,
             link: StdMutex::new(Link::default()),
@@ -272,10 +275,26 @@ impl Peer {
         self.link().state()
     }
 
-    /// Carry what an earlier instance (a replaced peer, or a saved list from
-    /// an earlier run) knew of when the peer was last seen.
+    /// Carry the live instance being replaced. Replacing a peer is an explicit retry,
+    /// including when that instance never reached it; automatic boot uses the cache path.
     pub fn seed_last_seen(&self, last_seen: Option<u64>) {
+        self.retry_immediately.store(true, Ordering::SeqCst);
         self.with_link(|l| l.seed(last_seen));
+    }
+
+    pub(crate) fn seed_cached_link(
+        &self,
+        last_seen: Option<u64>,
+        down_since: Option<u64>,
+        next_retry_at: Option<u64>,
+    ) {
+        self.with_link(|l| {
+            l.seed(last_seen);
+            l.seed_outage(down_since);
+            if l.attempts == 0 && !l.is_ready() {
+                l.next_retry_at = next_retry_at;
+            }
+        });
     }
 
     /// Restore explicit outage age independently of a possibly old session-cache lastSeen.
@@ -728,6 +747,22 @@ impl Peer {
             tracing::warn!(peer = %self.name, "peer link already running");
             return;
         };
+        if !self.retry_immediately.load(Ordering::SeqCst)
+            && let Some(wait) = self.link().parked_retry_wait(crate::store::now_ms())
+        {
+            let reason = format!("peer unavailable; next automatic retry in {}s", wait.as_secs());
+            *self.last_error.lock_or_recover() = Some(reason.clone());
+            self.with_link(|_| ());
+            // Settle startup watchers now; no SSH is spawned just because this daemon updated.
+            let _ = self
+                .notices
+                .send((self.name.clone(), self.generation, PeerNotice::Disconnected(reason)))
+                .await;
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = self.stop_signal.notified() => return,
+            }
+        }
         while !self.stop.load(Ordering::SeqCst) {
             let outcome = self.connect_once(&mut out_rx).await;
             // Before the link goes down, so the state note of the drop names why.
@@ -742,9 +777,14 @@ impl Peer {
             // A link that held a while starts over; one that flaps (up, then
             // reset seconds later) keeps backing off, so a loaded host is
             // not hit with a reconnect every second.
-            if self.with_link(|l| l.down(crate::store::now_ms(), self.timings.stable_after)) {
-                backoff.reset();
-            }
+            let delay = self.with_link(|l| {
+                let now = crate::store::now_ms();
+                if l.down(now, self.timings.stable_after) {
+                    backoff.reset();
+                }
+                l.schedule_retry(&mut backoff, now, crate::peer_link::jitter())
+            });
+            let retry_at = tokio::time::Instant::now() + delay;
             if let Err(e) = outcome {
                 let notice = PeerNotice::Disconnected(e);
                 let _ = self.notices.send((self.name.clone(), self.generation, notice)).await;
@@ -753,13 +793,8 @@ impl Peer {
             if self.stop.load(Ordering::SeqCst) {
                 break;
             }
-            let delay = self.link().retry_delay(
-                &mut backoff,
-                crate::store::now_ms(),
-                crate::peer_link::jitter(),
-            );
             tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
+                _ = tokio::time::sleep_until(retry_at) => {}
                 _ = self.stop_signal.notified() => break,
             }
         }
