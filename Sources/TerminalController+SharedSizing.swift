@@ -1,6 +1,8 @@
 import AppKit
 import Bonsplit
 import CmuxCloud
+import CmuxMobileHost
+import CmuxRemoteSession
 import CmuxTerminal
 import CmuxTerminalSharing
 import CmuxTerminalSizing
@@ -722,5 +724,25 @@ extension TerminalController {
         var payload = sizeStatePayload(surfaceID: surfaceID)
         payload["disconnected"] = count
         return .ok(payload)
+    }
+}
+
+extension TerminalController {
+    /// Sizes the tmux window behind a mirrored tab to the phone viewing it, and
+    /// back to the Mac pane when the phone leaves (``RemoteTmuxPhoneWindowClaim``).
+    /// A mirror otherwise sizes its window only from the Mac pane drawing it, so
+    /// the phone showed a Mac-width window running off its right edge.
+    func claimRemoteTmuxWindowForPhone(surfaceID: UUID, target: MobileViewportApplyGovernor.Target) {
+        guard let workspace = controlTabManager(surfaceID: surfaceID)?.tabs.first(where: {
+                  $0.terminalInputTarget(forPanelID: surfaceID) != nil
+              }),
+              let mirror = workspace.remoteTmuxSessionMirror?.windowMirror(forSurfaceId: surfaceID)?.mirror
+        else { return }
+        let phone: (columns: Int, rows: Int)?
+        switch target {
+        case let .cap(columns, rows): phone = (columns, rows)
+        case .uncapped: phone = nil
+        }
+        mirror.setPhoneGrid(phone)
     }
 }

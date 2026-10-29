@@ -134,6 +134,12 @@ final class RemoteTmuxWindowMirror: RemoteTmuxControlPaneMutationOwner {
 
     /// The mirror container's last-known size in points from `onGeometryChange`.
     @ObservationIgnored var containerSizePt: CGSize?
+    /// The smallest grid of the phones viewing this window, which it claims
+    /// while they do (``RemoteTmuxPhoneWindowClaim``).
+    @ObservationIgnored var phoneGrid: (columns: Int, rows: Int)?
+    /// What this window claimed before a phone took it over; restored when the
+    /// last phone leaves a window no Mac pane is showing.
+    @ObservationIgnored var sizeBeforePhone: (columns: Int, rows: Int)?
     /// The hosting window's backing scale, delivered with the container size.
     @ObservationIgnored var containerScale: CGFloat?
     /// Latest post-claim geometry received before any pane has a visible host.

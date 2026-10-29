@@ -260,6 +260,24 @@ extension RemoteTmuxControlConnection {
 
     /// Sends the per-window form, tagging the command so an `%error` reply
     /// can flip the capability off and replay via the session-wide path.
+    /// Drops this client's claim on one window (`refresh-client -C '@id:'`), so
+    /// tmux sizes it from the other clients alone, as before the claim.
+    func clearWindowSize(windowId: Int) {
+        windowSizeDebounceTasks[windowId]?.cancel()
+        windowSizeDebounceTasks[windowId] = nil
+        guard lastWindowSizes.removeValue(forKey: windowId) != nil else { return }
+        windowClaimParityRearmsSpent.removeValue(forKey: windowId)
+        maximumWindowClaimColumns = lastWindowSizes.values.reduce(0) { max($0, $1.0) }
+        maximumWindowClaimRows = lastWindowSizes.values.reduce(0) { max($0, $1.1) }
+        guard supportsPerWindowSize, connectionState == .connected else { return }
+        #if DEBUG
+        cmuxDebugLog("remote.rects.clear @\(windowId)")
+        #endif
+        if sendInternal("refresh-client -C '@\(windowId):'", kind: .other) {
+            sentWindowSizes[windowId] = nil
+        }
+    }
+
     func sendPerWindowSize(windowId: Int, columns: Int, rows: Int) {
         // Record AFTER the send reports success: a send attempted while the
         // transport is down returns false, and recording it anyway makes

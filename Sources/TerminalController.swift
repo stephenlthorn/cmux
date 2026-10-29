@@ -16984,6 +16984,7 @@ class TerminalController {
         target: MobileViewportApplyGovernor.Target,
         reason: String
     ) -> (columns: Int, rows: Int)? {
+        claimRemoteTmuxWindowForPhone(surfaceID: surfaceID, target: target)
         guard let surface = terminalSocketTarget(surfaceID: surfaceID)?.surface else { return nil }
         switch target {
         case .cap(let columns, let rows):

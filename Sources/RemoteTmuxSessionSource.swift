@@ -208,6 +208,8 @@ protocol RemoteTmuxSessionSource: AnyObject {
     func unsubscribePaneAgent(paneId: Int)
     /// Sizes one window's grid (per-window `refresh-client -C`, with fallback).
     func setWindowSize(windowId: Int, columns: Int, rows: Int)
+    /// Drops this client's claim on one window, so the other clients size it.
+    func clearWindowSize(windowId: Int)
     /// Updates the cached session name (after a confirmed rename).
     func setSessionName(_ name: String)
     /// Applies a reordered window list to the cached order.
@@ -258,6 +260,8 @@ extension RemoteTmuxControlConnection: RemoteTmuxSessionSource {
 }
 
 extension RemoteTmuxSessionSource {
+    func clearWindowSize(windowId: Int) {}
+
     /// `clearScrollback: true` is the default the concrete connection declares; a protocol cannot
     /// carry a default argument, so it lives here instead.
     @discardableResult

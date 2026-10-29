@@ -752,11 +752,41 @@ extension RemoteTmuxWindowMirror {
               containerSizePt.width > 1, containerSizePt.height > 1,
               let cells = clientGrid(contentSize: containerSizePt)
         else { return false }
+        let claim = phoneGrid.flatMap {
+            RemoteTmuxPhoneWindowClaim.size(
+                phone: $0, mac: cells, beforePhone: nil, paneCount: paneIDsInOrder.count
+            )
+        } ?? cells
         connection.setWindowSize(
             windowId: windowId,
-            columns: cells.columns,
-            rows: cells.rows
+            columns: claim.columns,
+            rows: claim.rows
         )
         return true
+    }
+
+    /// A phone started, resized or stopped viewing this window: claim the
+    /// phone's grid while one does, and give the window back when none does.
+    func setPhoneGrid(_ grid: (columns: Int, rows: Int)?) {
+        guard !isTornDown, let connection else { return }
+        let hadPhone = phoneGrid != nil
+        if grid != nil, phoneGrid == nil {
+            sizeBeforePhone = connection.lastWindowSizes[windowId].map { (columns: $0.0, rows: $0.1) }
+        }
+        phoneGrid = grid
+        let mac = isVisibleForSizing ? containerSizePt.flatMap { clientGrid(contentSize: $0) } : nil
+        guard let claim = RemoteTmuxPhoneWindowClaim.size(
+            phone: grid,
+            mac: mac,
+            beforePhone: sizeBeforePhone,
+            paneCount: paneIDsInOrder.count
+        ) else {
+            // The window had no claim of ours before the phone: drop the
+            // phone's, so the other clients size it again.
+            if grid == nil, hadPhone { connection.clearWindowSize(windowId: windowId) }
+            return
+        }
+        if grid == nil { sizeBeforePhone = nil }
+        connection.setWindowSize(windowId: windowId, columns: claim.columns, rows: claim.rows)
     }
 }

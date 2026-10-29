@@ -379,6 +379,11 @@ final class RemoteTmuxSessionChannel: RemoteTmuxSessionSource {
         underlying.setWindowSize(windowId: windowId, columns: columns, rows: rows)
     }
 
+    func clearWindowSize(windowId: Int) {
+        guard windowIdSet.contains(windowId) else { return }
+        underlying.clearWindowSize(windowId: windowId)
+    }
+
     // MARK: - Filtering fan-out
 
     /// Whether `paneId` belongs to one of this session's windows (output/cwd/reflow
