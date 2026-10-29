@@ -7,13 +7,23 @@ public nonisolated enum HostCommand: Equatable, Sendable {
     case enroll(host: String, name: String)
     /// `host doctor NAME|HOST [--fix] --json`: the checks alone, or `--fix` for the failed ones.
     case doctor(host: String, fix: Bool)
+    /// `machine doctor ID --json`: the minting end's checks of a machine that joined with a one-line
+    /// token (Labs `labs.machineJoin`). It reads the cmux access token on stdin (``needsAccount``).
+    case joinedDoctor(id: String)
 
     /// The arguments after the `cmux-tui` binary.
     public var arguments: [String] {
         switch self {
         case let .enroll(host, name): ["acp", "host", "enroll", host, "--name", name, "--json"]
         case let .doctor(host, fix): ["acp", "host", "doctor", host] + (fix ? ["--fix"] : []) + ["--json"]
+        case let .joinedDoctor(id): ["machine", "doctor", id, "--json", "--cloud-token-stdin"]
         }
+    }
+
+    /// The run reads the signed-in account's cmux access token as one line on its stdin.
+    public var needsAccount: Bool {
+        if case .joinedDoctor = self { return true }
+        return false
     }
 }
 
@@ -128,6 +138,9 @@ public final class AddMachineModel {
         case add
         /// Check Machine: doctor for one SSH machine the app has, with Fix.
         case check(host: String, machineID: String)
+        /// Check for a machine that joined with a one-line token (``HostCommand/joinedDoctor(id:)``).
+        /// No Fix: the minting end repairs nothing on another machine.
+        case checkJoined(id: String, name: String)
     }
 
     public nonisolated enum Phase: Equatable, Sendable {
@@ -198,6 +211,20 @@ public final class AddMachineModel {
         doctor(fix: false)
     }
 
+    /// Check opens on a joined machine (`machine doctor ID`); its result is recorded under
+    /// ``JoinedMachine/healthID(_:)``.
+    public func beginJoinedCheck(id: String, name: String) {
+        let check = Mode.checkJoined(id: id, name: name)
+        if phase == .running, mode == check { return }
+        cancelRun()
+        candidatesTask?.cancel()
+        mode = check
+        machineID = nil
+        runHost = id
+        runName = name
+        doctor(fix: false)
+    }
+
     /// A candidate row was clicked: its name goes in the field. Nothing runs until Add is pressed,
     /// an agent peer included (the person's click is the trust step).
     public func pick(_ candidate: HostCandidate) {
@@ -240,6 +267,12 @@ public final class AddMachineModel {
             [AddMachineButton(action: .copyDetails, key: nil), AddMachineButton(action: .tryAgain, key: .return)]
         case (.failed, .check):
             [AddMachineButton(action: .copyDetails, key: nil), AddMachineButton(action: .fix, key: .return)]
+        case (.running, .checkJoined):
+            [AddMachineButton(action: .cancel, key: .escape)]
+        case (.ready, .checkJoined):
+            [AddMachineButton(action: .done, key: .return)]
+        case (.failed, .checkJoined):
+            [AddMachineButton(action: .copyDetails, key: nil), AddMachineButton(action: .done, key: .return)]
         }
     }
 
@@ -374,13 +407,18 @@ public final class AddMachineModel {
     }
 
     private func doctor(fix: Bool) {
-        guard case let .check(host, machineID) = mode else { return }
+        let command: HostCommand, machineID: String
+        switch mode {
+        case let .check(host, id): (command, machineID) = (.doctor(host: host, fix: fix), id)
+        case let .checkJoined(id, _): (command, machineID) = (.joinedDoctor(id: id), JoinedMachine.healthID(id))
+        case .add: return
+        }
         cancelRun()
         phase = .running
         let services = services
         task = Task { [weak self] in
             guard let self else { return }
-            let report = await stream(.doctor(host: host, fix: fix))
+            let report = await stream(command)
             guard !Task.isCancelled else { return }
             guard let report else { phase = .failed(nil); return }
             services.record(machineID, report)

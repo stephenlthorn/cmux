@@ -1,0 +1,60 @@
+public import Foundation
+public import Observation
+
+/// The machines that joined the team with a one-line token, for the Machines section (Labs
+/// `labs.machineJoin`). Read once per trigger, never on a timer: at launch, when the section shows,
+/// when Add Device's card reads the list (its flip), and after a Revoke or Rotate.
+@MainActor @Observable
+public final class JoinedMachineStore {
+    public nonisolated enum Change: String, Sendable {
+        case revoke, rotate
+    }
+
+    public private(set) var machines: [JoinedMachine] = []
+    /// The ids with a Revoke or Rotate in flight (their menu items are off meanwhile).
+    public private(set) var busy: Set<String> = []
+    /// The last Revoke or Rotate that failed, by machine id, until the next read.
+    public private(set) var failed: [String: Change] = [:]
+
+    /// The calls, nil while Labs `labs.machineJoin` is off (the store then lists nothing).
+    @ObservationIgnored private let service: () -> MachineJoinService?
+    @ObservationIgnored private var generation = 0
+
+    public init(service: @escaping () -> MachineJoinService?) {
+        self.service = service
+    }
+
+    /// Reads `cmux machine list` once. With the switch off the list empties; a failed read keeps
+    /// the rows it had.
+    public func refresh() async {
+        generation += 1
+        let mine = generation
+        guard let service = service() else { machines = []; return }
+        let rows = await service.list()
+        guard mine == generation, let rows else { return }
+        apply(rows)
+    }
+
+    /// Takes rows another reader got (Add Device's card reads the same list).
+    public func apply(_ rows: [JoinedMachine]) {
+        failed = [:]
+        if rows != machines { machines = rows }
+    }
+
+    /// Revokes or rotates `id`, then reads the list again. False when the platform refused or the
+    /// run failed (the row says so).
+    @discardableResult
+    public func perform(_ change: Change, _ id: String) async -> Bool {
+        guard let service = service(), !busy.contains(id) else { return false }
+        busy.insert(id)
+        failed[id] = nil
+        let ok = switch change {
+        case .revoke: await service.revoke(id)
+        case .rotate: await service.rotate(id)
+        }
+        busy.remove(id)
+        await refresh()
+        if !ok { failed[id] = change }
+        return ok
+    }
+}
