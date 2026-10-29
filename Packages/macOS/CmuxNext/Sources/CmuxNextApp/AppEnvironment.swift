@@ -2,6 +2,7 @@ import CmuxNextCompat
 import CmuxNextControl
 import CmuxNextDaemon
 import CmuxNextHomeEngine
+import CmuxNextSidebar
 import CmuxNextTerminal
 import CmuxNextUpdater
 import Foundation
@@ -68,6 +69,9 @@ struct AppEnvironment: Sendable {
     /// it each `HomeService` uses a temporary folder of its own (tests that build `AppServices`), so
     /// no test reads a draft another test typed in the same conversation.
     var homeCachesDirectory: URL?
+    /// Wraps the home daemon's sidebar document remote (`SidebarDocWiring.start`): only tests set it (a first load held
+    /// back, as on a busy Mac at launch); the app talks to the daemon directly.
+    var sidebarDocRemote: (@MainActor @Sendable (any SidebarDocRemote) -> any SidebarDocRemote)?
 
     var tag: String? { launch.tag }
     /// The build whose state roots this app uses (per-build isolation, cx-is1kf).

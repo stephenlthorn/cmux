@@ -107,8 +107,11 @@ final class ClassicUpgradeSimulator {
     private(set) var launchMade: Set<String> = []
     private var watcher: Task<Void, Never>?
 
-    /// - Parameter ssh: the daemon for an SSH destination (default: none connects).
-    init(mac: Mac, ssh: (@MainActor (String) throws -> DaemonService)? = nil) throws {
+    /// - Parameters:
+    ///   - ssh: the daemon for an SSH destination (default: none connects).
+    ///   - sidebarDocument: wraps the home daemon's sidebar document remote (a first load held back).
+    init(mac: Mac, ssh: (@MainActor (String) throws -> DaemonService)? = nil,
+         sidebarDocument: (@MainActor @Sendable (any SidebarDocRemote) -> any SidebarDocRemote)? = nil) throws {
         self.mac = mac
         let binary = try #require(SameTreeDaemonBinary.url)
         launcher = DaemonLauncher(
@@ -116,7 +119,9 @@ final class ClassicUpgradeSimulator {
                                  stateDirectory: mac.root.appendingPathComponent("state")),
             environment: { ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "SHELL": "/bin/sh", "TERM": "xterm-256color"] })
         _ = NSApplication.shared
-        services = AppServices(environment: AppEnvironment.current([:]))
+        var environment = AppEnvironment.current([:])
+        environment.sidebarDocRemote = sidebarDocument
+        services = AppServices(environment: environment)
         AppActions.bind(services)
         services.windows.ordersWindowsIn = false
         services.onboarding.classicMigrationSupport = mac.support

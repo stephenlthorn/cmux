@@ -32,6 +32,8 @@ public final class SidebarDocStore {
     public private(set) var isActive = false
     /// What the sidebar draws from the document (`show(live:)`); nil while inactive.
     public internal(set) var shown: SidebarDocProjection?
+    /// The first `sidebar.get` answered: the document loaded, or the load failed and the older path stays (`firstShowSettled`).
+    public private(set) var firstLoadSettled = false
     /// The `version` `shown` was built at: behind `version` while an applied change (a Cmd-N move) waits for the next
     /// `show`, a hop later.
     @ObservationIgnored public internal(set) var shownVersion: UInt64 = 0
@@ -119,6 +121,7 @@ public final class SidebarDocStore {
         Task { [weak self] in
             defer {
                 self?.loading = false
+                if self?.firstLoadSettled == false { self?.firstLoadSettled = true }
                 if self?.refetchAgain == true { self?.refetchAgain = false; self?.refresh() }
             }
             guard let data = try? await remote.get(), let records = try? SidebarDocRecords(document: data), let self,
