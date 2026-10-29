@@ -29,9 +29,9 @@ final class MachineSectionHostView: NSView, RightSidebarRefreshing {
         let hosting = NSHostingView(rootView: MachineSectionListView(model: model, newWorkspace: { id in
             registry.perform("workspace.newOnMachine", invocation: ActionInvocation(arguments: ["machine": .string(id)]))
         }, addMachine: { registry.perform("device.add") }, joinedStore: joined,
-        joinedAction: { [weak services] action, machine in
+        joinedAction: { [weak services] action, machine, row in
             guard let services else { return }
-            Self.perform(action, machine, services: services)
+            Self.perform(action, machine, rowID: row.id, services: services)
         }))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hosting)
@@ -81,11 +81,11 @@ final class MachineSectionHostView: NSView, RightSidebarRefreshing {
     }
 
     /// A joined machine's menu item. Revoke asks first; Rotate and Revoke read the list again after.
-    static func perform(_ action: JoinedMachineAction, _ machine: JoinedMachine, services: AppServices) {
+    static func perform(_ action: JoinedMachineAction, _ machine: JoinedMachine, rowID: String, services: AppServices) {
         let window = services.windows.active?.window
         switch action {
         case .check:
-            services.addMachine.checkJoined(id: machine.id, name: machine.name, over: window)
+            services.addMachine.checkJoined(id: machine.id, name: machine.name, rowID: rowID, over: window)
         case .rotate:
             // task-owner: one rotate; ends with its list read.
             Task { await services.joinedMachines.perform(.rotate, machine.id) }

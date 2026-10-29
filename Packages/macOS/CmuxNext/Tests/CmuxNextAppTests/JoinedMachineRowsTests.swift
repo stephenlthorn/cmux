@@ -199,6 +199,31 @@ import Testing
         #expect(!parts.dropFirst().joined().contains(secret), "not in the run's environment or argv")
     }
 
+    @Test func checkOnADaemonRowRecordsUnderThatRow() async {
+        let host = AddMachineFlowTests.FakeHost()
+        let doctor = [AddMachineFlowTests.step("listed", "ok")]
+        host.scripts = [doctor + [AddMachineFlowTests.report("lane-vm-3", "m_1", ok: true, doctor)]]
+        let model = AddMachineModel(services: host.services())
+        model.beginJoinedCheck(id: "m_1", name: "lane-vm-3", rowID: "ssh-7")
+        _ = await model.finished()
+        #expect(host.recorded.map(\.0) == ["ssh-7"], "the daemon row the machine shows on gets the mark")
+    }
+
+    @Test func aListAppliedFromElsewhereSupersedesAReadInFlight() async {
+        final class Gate: @unchecked Sendable { var held: CheckedContinuation<Void, Never>? }
+        let gate = Gate()
+        let stale = [Fake.machine("m_old", "stale")]
+        let store = JoinedMachineStore(service: {
+            MachineJoinService(mint: { _ in .failure(.failed) }, list: { await withCheckedContinuation { gate.held = $0 }; return stale })
+        })
+        let read = Task { await store.refresh() }
+        for _ in 0..<1000 where gate.held == nil { await Task.yield() }
+        store.apply([])
+        gate.held?.resume()
+        await read.value
+        #expect(store.machines.isEmpty, "the slower read does not bring back rows")
+    }
+
     /// The row and its menu as a picture: `Packages/macOS/CmuxNext/.build/machines-joined-rows.png`.
     @Test func theSectionWithJoinedRowsRenders() async throws {
         _ = NSApplication.shared

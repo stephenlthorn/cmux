@@ -37,8 +37,10 @@ public final class JoinedMachineStore {
         apply(rows)
     }
 
-    /// Takes rows another reader got (Add Device's card reads the same list).
+    /// Takes rows another reader got (Add Device's card reads the same list). A read of the store's
+    /// own still in flight is superseded by them.
     public func apply(_ rows: [JoinedMachine]) {
+        generation += 1
         failed = [:]
         if rows != machines { machines = rows }
     }

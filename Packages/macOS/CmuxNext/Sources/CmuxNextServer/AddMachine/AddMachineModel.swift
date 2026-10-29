@@ -140,7 +140,9 @@ public final class AddMachineModel {
         case check(host: String, machineID: String)
         /// Check for a machine that joined with a one-line token (``HostCommand/joinedDoctor(id:)``).
         /// No Fix: the minting end repairs nothing on another machine.
-        case checkJoined(id: String, name: String)
+        /// `rowID`: the Machines row the result is recorded under (its own `joined:` id, or the
+        /// daemon row of a joined machine the app also connects to).
+        case checkJoined(id: String, name: String, rowID: String)
     }
 
     public nonisolated enum Phase: Equatable, Sendable {
@@ -213,8 +215,8 @@ public final class AddMachineModel {
 
     /// Check opens on a joined machine (`machine doctor ID`); its result is recorded under
     /// ``JoinedMachine/healthID(_:)``.
-    public func beginJoinedCheck(id: String, name: String) {
-        let check = Mode.checkJoined(id: id, name: name)
+    public func beginJoinedCheck(id: String, name: String, rowID: String? = nil) {
+        let check = Mode.checkJoined(id: id, name: name, rowID: rowID ?? JoinedMachine.healthID(id))
         if phase == .running, mode == check { return }
         cancelRun()
         candidatesTask?.cancel()
@@ -410,7 +412,7 @@ public final class AddMachineModel {
         let command: HostCommand, machineID: String
         switch mode {
         case let .check(host, id): (command, machineID) = (.doctor(host: host, fix: fix), id)
-        case let .checkJoined(id, _): (command, machineID) = (.joinedDoctor(id: id), JoinedMachine.healthID(id))
+        case let .checkJoined(id, _, rowID): (command, machineID) = (.joinedDoctor(id: id), rowID)
         case .add: return
         }
         cancelRun()

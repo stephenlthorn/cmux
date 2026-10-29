@@ -21,7 +21,11 @@ extension MachineJoinService {
         }
         let machines = services.machines
         // Every successful list read feeds the Machines section too (Add Device's flip shows the row).
-        let store = { @MainActor [weak services] (rows: [JoinedMachine]) in services?.joinedMachines.apply(rows) }
+        // A read that lands after the switch turned off feeds nothing (the store emptied itself then).
+        let store = { @MainActor [weak services] (rows: [JoinedMachine]) in
+            guard let services, services.settings?.snapshot.machineJoin == true else { return }
+            services.joinedMachines.apply(rows)
+        }
         return MachineJoinService(
             mint: { name in
                 guard let cli else { return .failure(.failed) }

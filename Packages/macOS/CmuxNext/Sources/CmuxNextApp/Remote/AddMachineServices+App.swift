@@ -35,7 +35,7 @@ extension AddMachineServices {
             },
             run: { command in
                 #if DEBUG
-                if command.needsAccount, DebugJoinedMachines.service != nil {
+                if command.needsAccount, DebugJoinedMachines.service != nil, services.settings?.snapshot.machineJoin == true {
                     return AsyncThrowingStream { for line in DebugJoinedMachines.doctorLines { $0.yield(line) }; $0.finish() }
                 }
                 #endif

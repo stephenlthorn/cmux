@@ -84,12 +84,13 @@ public struct MachineSectionListView: View {
     let model: MachineSectionModel
     let newWorkspace: @MainActor (String) -> Void
     let addMachine: @MainActor () -> Void
-    let joinedAction: @MainActor (JoinedMachineAction, JoinedMachine) -> Void
+    /// A joined machine's menu item, with the row it was chosen on.
+    let joinedAction: @MainActor (JoinedMachineAction, JoinedMachine, MachineSectionRow) -> Void
     let joinedStore: JoinedMachineStore?
 
     public init(model: MachineSectionModel, newWorkspace: @escaping @MainActor (String) -> Void,
                 addMachine: @escaping @MainActor () -> Void, joinedStore: JoinedMachineStore? = nil,
-                joinedAction: @escaping @MainActor (JoinedMachineAction, JoinedMachine) -> Void = { _, _ in }) {
+                joinedAction: @escaping @MainActor (JoinedMachineAction, JoinedMachine, MachineSectionRow) -> Void = { _, _, _ in }) {
         self.model = model
         self.newWorkspace = newWorkspace
         self.addMachine = addMachine
@@ -104,7 +105,7 @@ public struct MachineSectionListView: View {
                 if let joined = row.joined {
                     JoinedMachineRowView(row: row, machine: joined, busy: joinedStore?.busy.contains(joined.id) == true,
                                          failed: joinedStore?.failed[joined.id], store: joinedStore, newWorkspace: newWorkspace,
-                                         perform: joinedAction)
+                                         perform: { action, machine in joinedAction(action, machine, row) })
                 } else {
                 HStack(alignment: .center, spacing: Metrics.panelInset) {
                     Icon(row.isLocal ? .machineLocal : .machineRemote, size: Metrics.iconSize)

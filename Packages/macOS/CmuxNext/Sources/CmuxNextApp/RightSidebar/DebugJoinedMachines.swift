@@ -31,6 +31,11 @@ enum DebugJoinedMachines {
     }()
 
     static func show(_ params: [String: JSONValue], services: AppServices) -> JSONValue {
+        // Only while labs.machineJoin is on, as the section itself.
+        guard services.settings?.snapshot.machineJoin == true else {
+            service = nil
+            return .object(["machines": .number(0), "reason": .string("labs.machineJoin is off")])
+        }
         service = MachineJoinService(mint: { _ in .failure(.unavailable) }, list: { rows })
         let store = services.joinedMachines
         store.apply(rows)

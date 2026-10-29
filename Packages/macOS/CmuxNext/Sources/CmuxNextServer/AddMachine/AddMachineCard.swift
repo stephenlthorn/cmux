@@ -28,8 +28,8 @@ public final class AddMachineCard {
     }
 
     /// Opens Check for a machine that joined with a one-line token and runs `machine doctor ID`.
-    public func checkJoined(id: String, name: String, over window: NSWindow?) {
-        model.beginJoinedCheck(id: id, name: name)
+    public func checkJoined(id: String, name: String, rowID: String? = nil, over window: NSWindow?) {
+        model.beginJoinedCheck(id: id, name: name, rowID: rowID)
         present(over: window)
     }
 
