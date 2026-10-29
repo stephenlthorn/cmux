@@ -36,6 +36,15 @@ enum SidebarDocWiring {
         let remote = DaemonSidebarDocRemote(connection: { local.connection }, serves: serves)
         let store = SidebarDocStore(remote: services.environment.sidebarDocRemote?(remote) ?? remote)
         SidebarDocStore.current = store
+        // New workspaces' placements wait for the document's first show (`awaitsDocument`); they go once it shows, or
+        // on the older path when the first load fails or the daemon does not serve the document. task-owner: the
+        // app's services; event-driven (Observation), and it ends there: one re-apply, never a loop.
+        Task { @MainActor [weak services] in
+            for await settled in ObservationStream({ store.firstShowSettled || local.connection != nil && !serves() }) where settled {
+                services?.windows.applyHeldPlacements()
+                return
+            }
+        }
         // Under `top` a new workspace lists at the daemon's slot for it until its item comes (sidebar-ordering-DESIGN.md);
         // `afterCurrent` keeps its row at the window's slot (PendingWorkspaceRows), `bottom` lists it last.
         docSections.placesNewRowsFirst = { [weak services] in
@@ -59,6 +68,11 @@ enum SidebarDocWiring {
             Set(machines.remoteDaemons.filter { $0.connection != nil }.compactMap(\.store.registryID))
         }, shown: { if layout.docLayout != $0 { layout.docLayout = $0 } })
     }
+
+    /// The home daemon serves the document and the sidebar does not draw it yet (its first `sidebar.get` is on the
+    /// way): a new workspace's placement sent now would go to the older order, which the document then ignores, and
+    /// the workspace would stay at the daemon's slot for it (a migration's first window came newest first).
+    static var awaitsDocument: Bool { SidebarDocStore.current.map { $0.isSupported && !$0.firstShowSettled } ?? false }
 
     /// The document over `machines`' daemon stores (`SidebarDocMachines`).
     static func docMachines(_ machines: MachineRegistry) -> SidebarDocMachines {

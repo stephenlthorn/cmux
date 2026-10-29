@@ -95,6 +95,9 @@ struct NewWorkspaceDefaultSlot: Hashable, Sendable {
 /// the workspace.
 @MainActor
 enum NewWorkspacePlacements {
+    /// Placements asked for so far (each one's `PendingPlacement.sequence`).
+    private static var asked: UInt64 = 0
+
     /// `workspaces.newPlacement` for a new workspace of window `windowID`
     /// (nil: the window reconcile gives it, the most recent open one), with
     /// the workspace that window shows now. Read it before the claim selects
@@ -111,7 +114,8 @@ enum NewWorkspacePlacements {
     static func expect(_ id: String, in windowID: String?, slot: WorkspaceSlot? = nil, byDefault: NewWorkspaceDefaultSlot?,
                        then: (@MainActor @Sendable (String, any WorkspaceSpawnSidebar) -> Void)? = nil, windows: WindowManager) {
         guard slot != nil || byDefault != nil || then != nil else { return }
-        windows.pendingPlacements[id] = PendingPlacement(window: windowID, slot: slot, byDefault: byDefault, then: then)
+        asked &+= 1
+        windows.pendingPlacements[id] = PendingPlacement(window: windowID, slot: slot, byDefault: byDefault, then: then, sequence: asked)
         if windows.services.machines.workspace(id: id) != nil { windows.applyPendingPlacements(live: [id]) }
     }
 
