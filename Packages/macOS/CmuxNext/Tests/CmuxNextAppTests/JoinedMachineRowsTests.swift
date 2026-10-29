@@ -160,21 +160,40 @@ import Testing
         #expect(model.joinLine?.isWatching == false)
     }
 
-    @Test func aRevokeStaysBusyUntilItsReadLands() async {
-        final class Gate: @unchecked Sendable { var held: CheckedContinuation<Void, Never>?; var rotated = 0 }
+    /// A call the test holds open: `entered` yields once the call is inside, `release()` lets it return.
+    final class Gate: @unchecked Sendable {
+        let entered: AsyncStream<Void>
+        private let enter: AsyncStream<Void>.Continuation
+        private var held: CheckedContinuation<Void, Never>?
+        var rotated = 0
+
+        init() { (entered, enter) = AsyncStream.makeStream() }
+
+        func hold() async {
+            await withCheckedContinuation { held = $0; enter.yield() }
+        }
+
+        func waitEntered() async {
+            for await _ in entered { return }
+        }
+
+        func release() { held?.resume(); held = nil }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aRevokeStaysBusyUntilItsReadLands() async {
         let gate = Gate()
         let rows = [Fake.machine("m_1", "lane-vm-3")]
         let store = JoinedMachineStore(service: {
             MachineJoinService(mint: { _ in .failure(.failed) }, list: { rows },
-                               revoke: { _ in await withCheckedContinuation { gate.held = $0 }; return true },
+                               revoke: { _ in await gate.hold(); return true },
                                rotate: { _ in gate.rotated += 1; return true })
         })
         await store.refresh()
         let first = Task { await store.perform(.revoke, "m_1") }
-        for _ in 0..<1000 where gate.held == nil { await Task.yield() }
+        await gate.waitEntered()
         #expect(store.busy.contains("m_1"))
         #expect(!(await store.perform(.rotate, "m_1")), "a second change while the first is in flight is refused")
-        gate.held?.resume()
+        gate.release()
         #expect(await first.value)
         #expect(store.busy.isEmpty)
         #expect(gate.rotated == 0)
@@ -209,17 +228,16 @@ import Testing
         #expect(host.recorded.map(\.0) == ["ssh-7"], "the daemon row the machine shows on gets the mark")
     }
 
-    @Test func aListAppliedFromElsewhereSupersedesAReadInFlight() async {
-        final class Gate: @unchecked Sendable { var held: CheckedContinuation<Void, Never>? }
+    @Test(.timeLimit(.minutes(1))) func aListAppliedFromElsewhereSupersedesAReadInFlight() async {
         let gate = Gate()
         let stale = [Fake.machine("m_old", "stale")]
         let store = JoinedMachineStore(service: {
-            MachineJoinService(mint: { _ in .failure(.failed) }, list: { await withCheckedContinuation { gate.held = $0 }; return stale })
+            MachineJoinService(mint: { _ in .failure(.failed) }, list: { await gate.hold(); return stale })
         })
         let read = Task { await store.refresh() }
-        for _ in 0..<1000 where gate.held == nil { await Task.yield() }
+        await gate.waitEntered()
         store.apply([])
-        gate.held?.resume()
+        gate.release()
         await read.value
         #expect(store.machines.isEmpty, "the slower read does not bring back rows")
     }
