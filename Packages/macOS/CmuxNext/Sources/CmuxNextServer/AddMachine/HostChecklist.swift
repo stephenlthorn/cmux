@@ -72,9 +72,13 @@ public nonisolated struct HostChecklist: Equatable, Sendable {
     /// The run stopped without a report (the CLI could not start, crashed or was cancelled): the
     /// running step fails with `detail`, the rest stay pending.
     public mutating func stop(_ detail: String) {
-        // A run that starts with no rows (a joined machine's check) still says why it stopped.
-        if rows.isEmpty { rows = [Row(step: HostStep(rawValue: "check"), status: .pending)] }
-        guard let index = rows.firstIndex(where: { $0.status == .running }) ?? rows.firstIndex(where: { $0.status == .pending }) else { return }
+        // With no row left open (a joined machine's check starts with none, and its rows may all
+        // be done before the run fails), a Check it row carries why it stopped.
+        let open = rows.firstIndex(where: { $0.status == .running }) ?? rows.firstIndex(where: { $0.status == .pending })
+        let index = open ?? {
+            rows.append(Row(step: HostStep(rawValue: "check"), status: .pending))
+            return rows.count - 1
+        }()
         rows[index].status = .done(.fail)
         rows[index].detail = detail
         rows[index].fix = nil

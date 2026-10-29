@@ -229,6 +229,17 @@ import Testing
         #expect(model.checklist.failing?.detail == "Sign in to cmux to check this machine.")
     }
 
+    @Test func aJoinedCheckThatFailsAfterItsRowsKeepsTheReason() async {
+        let host = AddMachineFlowTests.FakeHost()
+        host.scripts = [[AddMachineFlowTests.step("listed", "ok")]]
+        host.stops = [HostCLIStopFixture(message: "the hub stopped answering")]
+        let model = AddMachineModel(services: host.services())
+        model.beginJoinedCheck(id: "m_1", name: "lane-vm-3")
+        _ = await model.finished()
+        #expect(model.checklist.rows.map(\.step.rawValue) == ["listed", "check"])
+        #expect(model.checklist.failing?.detail == "the hub stopped answering")
+    }
+
     @Test func checkOnADaemonRowRecordsUnderThatRow() async {
         let host = AddMachineFlowTests.FakeHost()
         let doctor = [AddMachineFlowTests.step("listed", "ok")]
