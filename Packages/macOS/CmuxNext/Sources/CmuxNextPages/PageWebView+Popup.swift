@@ -23,6 +23,12 @@ extension PageWebView {
         return JSONValue(foundation: host.show(model)) ?? .object(["shown": .bool(false)])
     }
 
+    /// The person chose a row of a native menu shown for the page, in whichever engine draws it.
+    func noteMenuChoice() {
+        if chromiumSession != nil { chromiumUserInput(at: ProcessInfo.processInfo.systemUptime) }
+        else { (webView as? PageWKWebView)?.noteMenuChoice() }
+    }
+
     /// A right-click menu of the page (`cmux.app.contextMenu.show`) as a standard macOS menu at the
     /// pointer; answers the chosen row's id once it closes.
     func contextMenu(_ params: [String: Any]) async -> JSONValue {
@@ -30,6 +36,10 @@ extension PageWebView {
         let picked: String? = await withCheckedContinuation { continuation in
             menu.present(in: focusView, zoom: CGFloat(pageZoom)) { continuation.resume(returning: $0) }
         }
+        // The menu tracked the person's own pointer and keys until it closed: a row they chose is
+        // their gesture, so the page call it starts (Settings > Menus' Move to… saving) is theirs,
+        // as the Chromium page's own right-click menu notes (`showChromiumMenu`).
+        if picked != nil { noteMenuChoice() }
         return .object(["picked": picked.map(JSONValue.string) ?? .null])
     }
 }

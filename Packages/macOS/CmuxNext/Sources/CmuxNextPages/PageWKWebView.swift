@@ -79,6 +79,12 @@ final class PageWKWebView: WKWebView {
         noteUserActivation(at: event.timestamp > 0 ? event.timestamp : ProcessInfo.processInfo.systemUptime)
     }
 
+    /// The person chose a row of a native menu the host showed for this page (AppKit tracked it;
+    /// page script cannot).
+    func noteMenuChoice() {
+        noteUserActivation(at: ProcessInfo.processInfo.systemUptime)
+    }
+
     /// Drops the recorded activation and the opened menu: the view now shows another document
     /// (a pooled view rebound or parked), which must not use a gesture made in the old one.
     func forgetUserActivation() {
