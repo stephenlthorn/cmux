@@ -220,6 +220,9 @@ struct WorkspaceDetailView: View {
                    store.terminalCreationErrorWorkspaceID == workspace.rpcWorkspaceID {
                     terminalCreationRecovery(message: message)
                 }
+                #if os(iOS)
+                terminalTabStrip
+                #endif
                 detailSurfaceContent
             }
         }
@@ -1359,6 +1362,19 @@ struct WorkspaceDetailView: View {
 
     private func stopActiveSimulatorStream() {
         store.stopActiveMobileSimulatorStream(in: workspace.rpcWorkspaceID.rawValue)
+    }
+
+    /// Every terminal in the workspace as a visible tab, when there is more than one.
+    @ViewBuilder
+    private var terminalTabStrip: some View {
+        let strip = MobileTerminalTabStrip(terminals: workspace.terminals, selectedID: store.selectedTerminalID)
+        if !strip.tabs.isEmpty {
+            TerminalTabStripView(
+                strip: strip,
+                terminalTheme: store.activeTerminalTheme,
+                select: selectTerminalFromPicker
+            )
+        }
     }
 
     private func selectTerminalFromPicker(_ terminalID: MobileTerminalPreview.ID) {
