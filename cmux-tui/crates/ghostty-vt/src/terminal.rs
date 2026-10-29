@@ -972,19 +972,11 @@ impl Terminal {
     }
 
     fn active_row_wrap_continuation(&self, y: u16) -> Option<bool> {
-        let grid_ref = self.grid_ref(sys::GHOSTTY_POINT_TAG_ACTIVE, 0, u64::from(y))?;
-        let mut row = sys::GhosttyRow::default();
-        check(unsafe { sys::ghostty_grid_ref_row(&grid_ref, &mut row) }).ok()?;
-        let mut continuation = false;
-        check(unsafe {
-            sys::ghostty_row_get(
-                row,
-                sys::GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
-                (&mut continuation as *mut bool).cast(),
-            )
-        })
-        .ok()?;
-        Some(continuation)
+        self.row_flag(
+            sys::GHOSTTY_POINT_TAG_ACTIVE,
+            u64::from(y),
+            sys::GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
+        )
     }
 
     fn active_row_prompt_semantic(&self, y: u16) -> Option<sys::GhosttyRowSemanticPrompt> {
@@ -2300,6 +2292,118 @@ impl Terminal {
         max_bytes: usize,
         include_palette: bool,
     ) -> Result<Option<ReplayText>> {
+        match self.vt_replay_text_range_bounded_with(
+            range,
+            placement_rows,
+            max_bytes,
+            include_palette,
+            true,
+        ) {
+            // The formatter emitted more row breaks than the joined soft
+            // wraps predict: keep every row boundary instead, so no row moves.
+            Err(Error::InvalidValue) if self.cols() != 0 && range.start <= range.end => self
+                .vt_replay_text_range_bounded_with(
+                    range,
+                    placement_rows,
+                    max_bytes,
+                    include_palette,
+                    false,
+                ),
+            other => other,
+        }
+    }
+
+    /// Rows of `range` (all but its last) that end in a soft wrap the replay
+    /// can re-create by printing on: the row ends in text at its last column
+    /// and the next row continues it starting with text. Printing the next
+    /// row's text right after such a row wraps the target exactly where the
+    /// source wrapped, keeping the physical row count, and marks the wrap so
+    /// the target re-flows the line at another width. Every other row keeps
+    /// its own line break.
+    fn replay_soft_wrap_rows(&self, range: ReplayRowRange) -> (BTreeSet<u64>, BTreeSet<u64>) {
+        let mut joins = BTreeSet::new();
+        let mut breaks = BTreeSet::new();
+        let last_col = self.cols().saturating_sub(1);
+        for row in range.start..range.end {
+            if self.row_flag(sys::GHOSTTY_POINT_TAG_SCREEN, row, sys::GHOSTTY_ROW_DATA_WRAP)
+                != Some(true)
+            {
+                continue;
+            }
+            let joinable = self.row_flag(
+                sys::GHOSTTY_POINT_TAG_SCREEN,
+                row + 1,
+                sys::GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
+            ) == Some(true)
+                && self.row_prints_to_its_end(last_col, row)
+                && self.screen_cell_has_text(0, row + 1);
+            if joinable {
+                joins.insert(row);
+            } else {
+                breaks.insert(row);
+            }
+        }
+        (joins, breaks)
+    }
+
+    fn row_flag(
+        &self,
+        tag: sys::GhosttyPointTag,
+        y: u64,
+        data: sys::GhosttyRowData,
+    ) -> Option<bool> {
+        let grid_ref = self.grid_ref(tag, 0, y)?;
+        let mut row = sys::GhosttyRow::default();
+        check(unsafe { sys::ghostty_grid_ref_row(&grid_ref, &mut row) }).ok()?;
+        let mut value = false;
+        check(unsafe { sys::ghostty_row_get(row, data, (&mut value as *mut bool).cast()) }).ok()?;
+        Some(value)
+    }
+
+    /// Whether printing the row's cells leaves the cursor at its last column:
+    /// the row ends in text or a wide character's tail, or in the spacer a
+    /// wide character left when it wrapped (the formatter skips that spacer,
+    /// and the wide character wraps again on the target).
+    fn row_prints_to_its_end(&self, last_col: u16, y: u64) -> bool {
+        match self.screen_cell(last_col, y) {
+            Some((true, _) | (_, CellWidth::SpacerTail)) => true,
+            Some((_, CellWidth::SpacerHead)) if last_col > 0 => matches!(
+                self.screen_cell(last_col - 1, y),
+                Some((true, _) | (_, CellWidth::SpacerTail))
+            ),
+            _ => false,
+        }
+    }
+
+    fn screen_cell_has_text(&self, x: u16, y: u64) -> bool {
+        matches!(self.screen_cell(x, y), Some((true, _)))
+    }
+
+    /// Whether the screen cell holds text, and its width.
+    fn screen_cell(&self, x: u16, y: u64) -> Option<(bool, CellWidth)> {
+        let grid_ref = self.grid_ref(sys::GHOSTTY_POINT_TAG_SCREEN, x, y)?;
+        let mut raw = sys::GhosttyCell::default();
+        check(unsafe { sys::ghostty_grid_ref_cell(&grid_ref, &mut raw) }).ok()?;
+        let mut has_text = false;
+        check(unsafe {
+            sys::ghostty_cell_get(
+                raw,
+                sys::GHOSTTY_CELL_DATA_HAS_TEXT,
+                (&mut has_text as *mut bool).cast(),
+            )
+        })
+        .ok()?;
+        Some((has_text, crate::render::cell_width(raw)))
+    }
+
+    fn vt_replay_text_range_bounded_with(
+        &mut self,
+        range: ReplayRowRange,
+        placement_rows: &KittyReplayRowIndex,
+        max_bytes: usize,
+        include_palette: bool,
+        join_soft_wraps: bool,
+    ) -> Result<Option<ReplayText>> {
         let cols = self.cols();
         if cols == 0 || range.start > range.end {
             return Err(Error::InvalidValue);
@@ -2333,8 +2437,23 @@ impl Terminal {
         // ranges depend on physical row cursor positions, so retain the
         // row-delimited form for those cases.
         let preserve_soft_wrap = !history_bearing && !insert_at_start && !has_placement_anchor;
+        // Row-delimited history still keeps soft wraps: a joinable wrapped row
+        // (see `replay_soft_wrap_rows`) prints on into its continuation, which
+        // re-creates the wrap on the same physical rows; any other wrapped row
+        // ends its segment and keeps a line break. Without this, a line that
+        // soft-wrapped at an older width comes back split there for good.
+        let joining = join_soft_wraps && !preserve_soft_wrap && history_bearing;
+        let joins = if joining {
+            let (mut joins, breaks) = self.replay_soft_wrap_rows(range);
+            segment_ends.extend(breaks);
+            joins.retain(|row| !segment_ends.contains(row));
+            joins
+        } else {
+            BTreeSet::new()
+        };
+        let joins_before = |row: u64| joins.range(range.start..row).count();
         let mut emitted_breaks = 0usize;
-        for segment_end in segment_ends {
+        for segment_end in segment_ends.iter().copied() {
             if segment_end < segment_start {
                 continue;
             }
@@ -2348,7 +2467,7 @@ impl Terminal {
                     first,
                     last,
                     include_palette,
-                    preserve_soft_wrap,
+                    preserve_soft_wrap || joining,
                 ),
                 remaining,
             )?
@@ -2361,8 +2480,12 @@ impl Terminal {
             }
             bytes.extend_from_slice(&chunk);
             if !preserve_soft_wrap && history_bearing {
-                let expected_breaks =
-                    usize::try_from(segment_end - range.start).unwrap_or(usize::MAX);
+                let expected_breaks = usize::try_from(segment_end - range.start)
+                    .unwrap_or(usize::MAX)
+                    .saturating_sub(joins_before(segment_end));
+                if joining && emitted_breaks > expected_breaks {
+                    return Err(Error::InvalidValue);
+                }
                 while emitted_breaks < expected_breaks {
                     if bytes.len().saturating_add(2) > format_max_bytes {
                         return Ok(None);
@@ -2388,7 +2511,11 @@ impl Terminal {
             }
         }
         if !preserve_soft_wrap && history_bearing {
-            let expected_breaks = usize::try_from(replay_rows - 1).unwrap_or(usize::MAX);
+            let expected_breaks =
+                usize::try_from(replay_rows - 1).unwrap_or(usize::MAX).saturating_sub(joins.len());
+            if joining && emitted_breaks > expected_breaks {
+                return Err(Error::InvalidValue);
+            }
             for _ in emitted_breaks..expected_breaks {
                 if bytes.len().saturating_add(2) > format_max_bytes {
                     return Ok(None);
