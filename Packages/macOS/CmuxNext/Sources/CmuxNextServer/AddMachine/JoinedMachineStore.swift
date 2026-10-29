@@ -15,6 +15,8 @@ public final class JoinedMachineStore {
     public private(set) var busy: Set<String> = []
     /// The last Revoke or Rotate that failed, by machine id, until the next read.
     public private(set) var failed: [String: Change] = [:]
+    /// The machine whose "…" menu is open: its button stays shown and lit until the menu closes.
+    public var openMenu: String?
 
     /// The calls, nil while Labs `labs.machineJoin` is off (the store then lists nothing).
     @ObservationIgnored private let service: () -> MachineJoinService?

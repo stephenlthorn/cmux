@@ -27,11 +27,14 @@ struct JoinedMachineRowView: View {
     let machine: JoinedMachine
     let busy: Bool
     let failed: JoinedMachineStore.Change?
+    /// Holds which row's menu is open (nil in a picture with no store).
+    let store: JoinedMachineStore?
     let perform: @MainActor (JoinedMachineAction, JoinedMachine) -> Void
 
     @State private var rowHovered = false
     @State private var buttonHovered = false
-    @State private var menuOpen = false
+
+    private var menuOpen: Bool { store?.openMenu == machine.id }
 
     var body: some View {
         HStack(alignment: .center, spacing: Metrics.panelInset) {
@@ -98,13 +101,14 @@ struct JoinedMachineRowView: View {
     /// Opens the menu under the pointer, lit until it closes. `popUp` returns when the menu
     /// closes; the state change lands first, so the lit button is drawn under the open menu.
     private func showMenu() {
-        menuOpen = true
+        let id = machine.id, store = store
+        store?.openMenu = id
         let menu = JoinedMachineMenu.make(machine, busy: busy, perform: perform)
         let point = NSEvent.mouseLocation
         // task-owner: one menu per click; ends when the menu closes.
         Task { @MainActor in
             menu.popUp(positioning: nil, at: point, in: nil)
-            menuOpen = false
+            if store?.openMenu == id { store?.openMenu = nil }
         }
     }
 }
@@ -116,7 +120,10 @@ enum JoinedMachineMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         for action in JoinedMachineAction.allCases {
-            let item = ClosureMenuItem(title: JoinedMachineStrings.title(action)) { perform(action, machine) }
+            let target = JoinedMachineMenuTarget { perform(action, machine) }
+            let item = NSMenuItem(title: JoinedMachineStrings.title(action), action: #selector(JoinedMachineMenuTarget.run), keyEquivalent: "")
+            item.target = target
+            item.representedObject = target
             item.isEnabled = !busy && action.isAvailable(for: machine.state)
             item.setAccessibilityIdentifier("cmux.machines.joined.\(action.rawValue)")
             if action == .revoke { menu.addItem(.separator()) }
@@ -126,21 +133,15 @@ enum JoinedMachineMenu {
     }
 }
 
-/// A menu item that runs a closure.
-@MainActor
-final class ClosureMenuItem: NSMenuItem {
-    private let run: @MainActor () -> Void
+/// Keeps a menu item's closure alive as its target (the item holds it in `representedObject`).
+final class JoinedMachineMenuTarget: NSObject {
+    private let body: @MainActor () -> Void
 
-    init(title: String, run: @escaping @MainActor () -> Void) {
-        self.run = run
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
-        target = self
+    init(_ body: @escaping @MainActor () -> Void) {
+        self.body = body
     }
 
-    @available(*, unavailable)
-    required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    @objc private func fire() { run() }
+    @MainActor @objc func run() { body() }
 }
 
 nonisolated enum JoinedMachineMetrics {

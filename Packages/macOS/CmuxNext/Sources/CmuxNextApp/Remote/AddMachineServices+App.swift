@@ -34,6 +34,11 @@ extension AddMachineServices {
                 }
             },
             run: { command in
+                #if DEBUG
+                if command.needsAccount, DebugJoinedMachines.service != nil {
+                    return AsyncThrowingStream { for line in DebugJoinedMachines.doctorLines { $0.yield(line) }; $0.finish() }
+                }
+                #endif
                 guard let cli else { return AsyncThrowingStream { $0.finish(throwing: ActionFailure(message: RemoteStrings.noClient)) } }
                 return command.needsAccount ? accountRun(cli, command, auth: services.cloud.auth) : cli.lines(command.arguments)
             },

@@ -47,7 +47,8 @@ extension AddDeviceServices {
             // clipboard managers do not keep it.
             copyConcealed: { line in
                 SystemPasswordPasteboard().write(line, markers: [ConcealedPasteboard.concealedType, ConcealedPasteboard.transientType])
-            })
+            },
+            showMachines: { [weak services] in _ = services?.registry.perform(RightSidebarMode.machines.actionID) })
     }
 }
 

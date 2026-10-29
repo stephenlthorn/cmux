@@ -114,6 +114,9 @@ final class AppServices {
     private(set) lazy var devices = DeviceDirectory.app(self)
     /// The Machines section's joined machines (Labs `labs.machineJoin`); empty while it is off.
     private(set) lazy var joinedMachines = JoinedMachineStore(service: { [weak self] in
+        #if DEBUG
+        if let fixture = DebugJoinedMachines.service { return fixture }
+        #endif
         guard let self, self.settings?.snapshot.machineJoin == true else { return nil }
         return MachineJoinService.app(self)
     })

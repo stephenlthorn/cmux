@@ -143,6 +143,22 @@ import Testing
         #expect(model.buttons.map(\.action) == [.copyDetails, .done])
     }
 
+    @Test func theJoinedCardOffersShowInMachines() async {
+        let fake = MachineJoinLineFlowTests.Fake()
+        fake.rows = [MachineJoinLineFlowTests.Fake.joined("jt_1")]
+        let devices = AddDeviceFlowTests.Fake()
+        var shown = 0
+        var services = MachineJoinLineFlowTests.services(devices, fake)
+        services.showMachines = { shown += 1 }
+        let model = fake.deviceModel(services)
+        await model.begin(way: .joinLine)
+        await model.joinLine?.mint()
+        #expect(model.buttons.map(\.action) == [.showMachines, .done])
+        #expect(model.perform(.showMachines), "Show in Machines closes the card")
+        #expect(shown == 1)
+        #expect(model.joinLine?.isWatching == false)
+    }
+
     /// The row and its menu as a picture: `Packages/macOS/CmuxNext/.build/machines-joined-rows.png`.
     @Test func theSectionWithJoinedRowsRenders() async throws {
         _ = NSApplication.shared

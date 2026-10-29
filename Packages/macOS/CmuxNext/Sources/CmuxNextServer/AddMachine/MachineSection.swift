@@ -99,7 +99,7 @@ public struct MachineSectionListView: View {
             ForEach(rows) { row in
                 if let joined = row.joined {
                     JoinedMachineRowView(row: row, machine: joined, busy: joinedStore?.busy.contains(joined.id) == true,
-                                         failed: joinedStore?.failed[joined.id], perform: joinedAction)
+                                         failed: joinedStore?.failed[joined.id], store: joinedStore, perform: joinedAction)
                 } else {
                 HStack(alignment: .center, spacing: Metrics.panelInset) {
                     Icon(row.isLocal ? .machineLocal : .machineRemote, size: Metrics.iconSize)
