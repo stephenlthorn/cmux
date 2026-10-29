@@ -96,6 +96,12 @@ struct AgentFeedStoreView: View {
             setNeedsInput: { item, needsInput in
                 store.setAgentFeedItemNeedsInput(item, needsInput)
             },
+            clear: { item in
+                store.clearAgentFeedItems([item])
+            },
+            clearAll: { items in
+                store.clearAllAgentFeedItems(items)
+            },
             refresh: {
                 await store.refreshAgentFeed()
             },

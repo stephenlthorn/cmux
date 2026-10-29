@@ -16,7 +16,7 @@ public struct MobileWorkspaceRecencyOrder: Sendable {
 
         mutating func append(_ workspace: MobileWorkspacePreview) {
             workspaces.append(workspace)
-            if let activityAt = workspace.lastActivityAt,
+            if let activityAt = workspace.effectiveActivityAt,
                newestActivityAt.map({ activityAt > $0 }) ?? true {
                 newestActivityAt = activityAt
             }
@@ -46,7 +46,7 @@ public struct MobileWorkspaceRecencyOrder: Sendable {
     public init() {}
 
     /// Pinned rows first (the flat list's standing rule), then most recent
-    /// `lastActivityAt` first. Rows without a timestamp sort last, and every
+    /// ``MobileWorkspacePreview/effectiveActivityAt`` first. Rows without a timestamp sort last, and every
     /// tie keeps the incoming order so the list cannot shuffle between
     /// refreshes of equal payloads.
     public func displayOrder(_ workspaces: [MobileWorkspacePreview]) -> [MobileWorkspacePreview] {
@@ -54,7 +54,7 @@ public struct MobileWorkspaceRecencyOrder: Sendable {
             if lhs.element.isPinned != rhs.element.isPinned {
                 return lhs.element.isPinned
             }
-            switch (lhs.element.lastActivityAt, rhs.element.lastActivityAt) {
+            switch (lhs.element.effectiveActivityAt, rhs.element.effectiveActivityAt) {
             case let (lhsDate?, rhsDate?) where lhsDate != rhsDate:
                 return lhsDate > rhsDate
             case (_?, nil):
@@ -108,7 +108,7 @@ public struct MobileWorkspaceRecencyOrder: Sendable {
                 ungroupedBlocks.append(DisplayBlock(
                     group: nil,
                     workspaces: [workspace],
-                    newestActivityAt: workspace.lastActivityAt,
+                    newestActivityAt: workspace.effectiveActivityAt,
                     isPinned: workspace.isPinned,
                     stableIndex: index
                 ))

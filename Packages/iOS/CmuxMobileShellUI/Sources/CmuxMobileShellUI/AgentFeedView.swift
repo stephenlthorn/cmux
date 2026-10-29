@@ -43,6 +43,7 @@ struct AgentFeedView: View {
     @State private var now = Date()
     @State private var composeContext: AgentFeedComposeContext?
     @State private var readingItem: MobileAgentFeedItem?
+    @State private var isConfirmingClearAll = false
 
     init(
         items: [MobileAgentFeedItem],
@@ -92,7 +93,7 @@ struct AgentFeedView: View {
     var body: some View {
         Group {
             switch status {
-            case .idle, .loading where items.isEmpty:
+            case .idle where items.isEmpty, .loading where items.isEmpty:
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .unavailable where items.isEmpty:
@@ -108,6 +109,18 @@ struct AgentFeedView: View {
         .mobileInlineNavigationTitle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                if !visibleRows.isEmpty {
+                    Button {
+                        isConfirmingClearAll = true
+                    } label: {
+                        Label(clearAllLabel, systemImage: "xmark.bin")
+                            .labelStyle(.iconOnly)
+                    }
+                    .accessibilityLabel(clearAllLabel)
+                    .accessibilityIdentifier("MobileAgentFeedClearAll")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 AgentFeedFilterMenu(
                     filter: projection.filter,
                     needsInputCount: visibleNeedsInputCount,
@@ -117,6 +130,27 @@ struct AgentFeedView: View {
                     }
                 )
             }
+        }
+        .confirmationDialog(
+            String(
+                localized: "mobile.agentFeed.clearAll.confirmTitle",
+                defaultValue: "Clear the Feed on this iPhone?",
+                bundle: .module
+            ),
+            isPresented: $isConfirmingClearAll,
+            titleVisibility: .visible
+        ) {
+            Button(clearAllLabel, role: .destructive) {
+                actions.clearAll(visibleRows.map(\.item))
+            }
+            .accessibilityIdentifier("MobileAgentFeedClearAllConfirm")
+            Button(String(localized: "mobile.agentFeed.cancel", defaultValue: "Cancel", bundle: .module), role: .cancel) {}
+        } message: {
+            Text(String(
+                localized: "mobile.agentFeed.clearAll.confirmMessage",
+                defaultValue: "Requests still waiting on your answer stay.",
+                bundle: .module
+            ))
         }
         .sheet(item: $composeContext) { context in
             Group {
@@ -144,6 +178,10 @@ struct AgentFeedView: View {
             now = Date()
             await actions.refresh()
         }
+        .task(id: isActive) {
+            guard isActive else { return }
+            await MobileMinuteClock.run { now = $0 }
+        }
         .onChange(of: itemsRevision) { oldRevision, newRevision in
             if oldRevision.scopeRevision != newRevision.scopeRevision {
                 composeContext = nil
@@ -154,6 +192,10 @@ struct AgentFeedView: View {
         .onChange(of: searchText) { _, newSearchText in
             projection.searchText = newSearchText
         }
+    }
+
+    private var clearAllLabel: String {
+        String(localized: "mobile.agentFeed.clearAll", defaultValue: "Clear All", bundle: .module)
     }
 
     private var visibleRows: [AgentFeedRowModel] {
@@ -230,6 +272,16 @@ struct AgentFeedView: View {
                                     )
                                 }
                                 .tint(.orange)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                actions.clear(item)
+                            } label: {
+                                Label(
+                                    String(localized: "mobile.agentFeed.clear", defaultValue: "Clear", bundle: .module),
+                                    systemImage: "xmark.circle"
+                                )
                             }
                         }
                     }

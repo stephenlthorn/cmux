@@ -134,6 +134,13 @@ final class NotificationFeedProjection {
         scheduleRebuild()
     }
 
+    /// Regroups Today/Yesterday when a list left open crosses midnight; any
+    /// other minute tick changes nothing.
+    func advanceReferenceDate(to date: Date) {
+        guard MobileMinuteClock.dayChanged(from: referenceDate, to: date, calendar: calendar) else { return }
+        update(items: sourceItems, referenceDate: date)
+    }
+
     func waitForPendingRebuild() async {
         await rebuildTask?.value
     }

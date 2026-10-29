@@ -1,6 +1,7 @@
 import CmuxConversationCore
 import CmuxConversationUI
 import CmuxMobileShell
+import CmuxMobileShellModel
 import CmuxMobileSupport
 import Foundation
 import SwiftUI
@@ -23,6 +24,9 @@ struct ChiefHomeView: View {
     @State private var errorMessage: String?
     @State private var query = ""
     @State private var changeCursor: String?
+    /// The Chief row shown before Chief has any saved conversation. Kept so a
+    /// later empty update does not flip Home to "No Chief conversations".
+    @State private var defaultConversation: MobileChiefConversation?
 
     private var pinnedConversation: MobileChiefConversation? {
         conversations.first(where: \.pinned) ?? conversations.first
@@ -63,6 +67,21 @@ struct ChiefHomeView: View {
                     )
                 } else {
                     List {
+                        if errorMessage != nil {
+                            // Rows stay on screen when updates fail; say so
+                            // instead of passing stale previews off as live.
+                            Label(
+                                L10n.string(
+                                    "mobile.chief.home.updateFailed",
+                                    defaultValue: "Couldn’t update. Showing the last conversations."
+                                ),
+                                systemImage: "wifi.slash"
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .listRowBackground(Color.clear)
+                            .accessibilityIdentifier("MobileChiefHomeUpdateFailed")
+                        }
                         if let pinned = pinnedConversation, matches(pinned) {
                             Section {
                                 NavigationLink(value: pinned) {
@@ -153,6 +172,13 @@ struct ChiefHomeView: View {
         }
     }
 
+    private static func ordered(_ rows: [MobileChiefConversation]) -> [MobileChiefConversation] {
+        rows.sorted {
+            if $0.pinned != $1.pinned { return $0.pinned && !$1.pinned }
+            return $0.updatedAt > $1.updatedAt
+        }
+    }
+
     private func matches(_ conversation: MobileChiefConversation) -> Bool {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return true }
@@ -183,17 +209,16 @@ struct ChiefHomeView: View {
                 } else if status?.started == true,
                           let id = status?.defaultConversation,
                           !id.isEmpty {
-                    rows = [MobileChiefConversation(
+                    let fallback = MobileChiefConversation(
                         id: id,
                         title: L10n.string("mobile.chief.name", defaultValue: "Chief"),
                         pinned: true
-                    )]
+                    )
+                    defaultConversation = fallback
+                    rows = [fallback]
                 }
             }
-            conversations = rows.sorted {
-                if $0.pinned != $1.pinned { return $0.pinned && !$1.pinned }
-                return $0.updatedAt > $1.updatedAt
-            }
+            conversations = Self.ordered(rows)
             errorMessage = startupFailure
         } catch {
             errorMessage = String(describing: error)
@@ -228,10 +253,11 @@ struct ChiefHomeView: View {
                 )
                 guard !Task.isCancelled else { return }
                 changeCursor = snapshot.changeCursor ?? changeCursor
-                conversations = snapshot.conversations.sorted {
-                    if $0.pinned != $1.pinned { return $0.pinned && !$1.pinned }
-                    return $0.updatedAt > $1.updatedAt
-                }
+                conversations = Self.ordered(
+                    snapshot.conversations.isEmpty
+                        ? defaultConversation.map { [$0] } ?? []
+                        : snapshot.conversations
+                )
                 errorMessage = nil
                 consecutiveFailures = 0
             } catch {
@@ -362,12 +388,6 @@ private struct ChiefAvatarView: View {
 private struct ChiefConversationRow: View {
     let conversation: MobileChiefConversation
 
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
@@ -387,10 +407,14 @@ private struct ChiefConversationRow: View {
                         .font(.body.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    if let stamp = relativeDate(conversation.updatedAt) {
-                        Text(stamp)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    // Home redraws only when Chief reports a change, so the
+                    // stamp keeps its own minute clock.
+                    TimelineView(.everyMinute) { context in
+                        if let stamp = relativeDate(conversation.updatedAt, now: context.date) {
+                            Text(stamp)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.semibold))
@@ -429,13 +453,13 @@ private struct ChiefConversationRow: View {
         } else if conversation.unread > 0 {
             values.append(L10n.unreadLabel(count: conversation.unread))
         }
-        if let stamp = relativeDate(conversation.updatedAt) { values.append(stamp) }
+        if let stamp = relativeDate(conversation.updatedAt, now: Date()) { values.append(stamp) }
         return values.joined(separator: ", ")
     }
 
-    private func relativeDate(_ date: Date) -> String? {
+    private func relativeDate(_ date: Date, now: Date) -> String? {
         guard date != .distantPast else { return nil }
-        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
+        return MobileFeedTimestamp.relativeLabel(for: date, now: now)
     }
 }
 

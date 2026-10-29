@@ -8,18 +8,25 @@ struct NotificationFeedRow: View, Equatable {
     let actions: NotificationFeedActions
     var context: NotificationFeedRowContext = .standalone
     var disclosure: NotificationFeedDisclosure? = nil
+    var clearItems: [MobileNotificationFeedItem] = []
     var toggleGroup: @MainActor () -> Void = {}
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.model == rhs.model && lhs.context == rhs.context && lhs.disclosure == rhs.disclosure
+            && lhs.clearItems.map(\.id) == rhs.clearItems.map(\.id)
     }
 
     var body: some View {
         // Group controls own a bottom-trailing slot, not a full-height
         // column that narrows the ordinary row's headline and provenance.
         VStack(alignment: .trailing, spacing: 0) {
-            NotificationFeedOpenRow(model: model, actions: actions, context: context)
-                .equatable()
+            NotificationFeedOpenRow(
+                model: model,
+                actions: actions,
+                context: context,
+                clearItems: clearItems.isEmpty ? [model.item] : clearItems
+            )
+            .equatable()
                 .frame(maxWidth: .infinity)
 
             if let disclosure {
@@ -67,9 +74,11 @@ private struct NotificationFeedOpenRow: View, Equatable {
     let model: NotificationFeedRowModel
     let actions: NotificationFeedActions
     let context: NotificationFeedRowContext
+    let clearItems: [MobileNotificationFeedItem]
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.model == rhs.model && lhs.context == rhs.context
+            && lhs.clearItems.map(\.id) == rhs.clearItems.map(\.id)
     }
 
     private var item: MobileNotificationFeedItem { model.item }
@@ -118,6 +127,13 @@ private struct NotificationFeedOpenRow: View, Equatable {
                 }
                 .accessibilityIdentifier("MobileNotificationFeedMarkUnreadMenu-\(accessibilitySuffix)")
             }
+
+            Button(role: .destructive) {
+                actions.clear(clearItems)
+            } label: {
+                Label(clearLabel, systemImage: "xmark.circle")
+            }
+            .accessibilityIdentifier("MobileNotificationFeedClearMenu-\(accessibilitySuffix)")
         })
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if !item.isRead {
@@ -144,6 +160,14 @@ private struct NotificationFeedOpenRow: View, Equatable {
                 .accessibilityIdentifier("MobileNotificationFeedMarkUnreadSwipe-\(accessibilitySuffix)")
             }
         }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                actions.clear(clearItems)
+            } label: {
+                Label(clearLabel, systemImage: "xmark.circle")
+            }
+            .accessibilityIdentifier("MobileNotificationFeedClearSwipe-\(accessibilitySuffix)")
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(model.presentation.headline)
@@ -165,12 +189,19 @@ private struct NotificationFeedOpenRow: View, Equatable {
                     actions.markUnread(item)
                 }
             }
+            Button(clearLabel) {
+                actions.clear(clearItems)
+            }
         }
         .accessibilityIdentifier("MobileNotificationFeedRow-\(accessibilitySuffix)")
     }
 
     private func open() {
         actions.open(item)
+    }
+
+    private var clearLabel: String {
+        L10n.string("mobile.notificationFeed.clear", defaultValue: "Clear")
     }
 
     private var accessibilitySuffix: String {
@@ -181,7 +212,7 @@ private struct NotificationFeedOpenRow: View, Equatable {
     /// spoken timestamp stays current even when cached models republish.
     private var accessibilityValue: String {
         (model.presentation.accessibilityDetails
-            + [item.createdAt.formatted(.relative(presentation: .named))])
+            + [MobileFeedTimestamp.relativeLabel(for: item.createdAt, now: Date())])
             .formatted()
     }
 }
@@ -302,12 +333,16 @@ private struct NotificationFeedHeadline: View {
 private struct NotificationFeedTimestamp: View {
     let createdAt: Date
 
+    /// Rows are equatable and redraw only when their notification changes, so
+    /// the label keeps its own minute clock or it freezes at first draw.
     var body: some View {
-        Text(createdAt, format: .relative(presentation: .named, unitsStyle: .abbreviated))
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
+        TimelineView(.everyMinute) { context in
+            Text(MobileFeedTimestamp.relativeLabel(for: createdAt, now: context.date))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
     }
 }
 

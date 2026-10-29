@@ -54,7 +54,14 @@ extension MobileWorkspacePreview {
     /// local time; older activity shows a compact month/day. Empty when there is
     /// no real activity timestamp.
     func activityTimestampLabel(referenceDate: Date = .now, calendar: Calendar = .current) -> String {
-        let date = latestActivityDate
+        Self.activityTimestampLabel(for: latestActivityDate, referenceDate: referenceDate, calendar: calendar)
+    }
+
+    static func activityTimestampLabel(
+        for date: Date,
+        referenceDate: Date = .now,
+        calendar: Calendar = .current
+    ) -> String {
         guard date > Date(timeIntervalSince1970: 1) else {
             return ""
         }
@@ -94,6 +101,6 @@ extension MobileWorkspacePreview {
     /// every-row `last_activity_at` stamp; falls back to the preview timestamp
     /// for Macs that emit previews but predate the stamp, then to
     /// `.distantPast` (which buckets to `.none`, an empty trailing slot).
-    private var latestActivityDate: Date { lastActivityAt ?? previewAt ?? .distantPast }
+    private var latestActivityDate: Date { effectiveActivityAt ?? .distantPast }
 
 }

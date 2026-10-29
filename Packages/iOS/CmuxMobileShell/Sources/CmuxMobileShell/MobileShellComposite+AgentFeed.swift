@@ -172,15 +172,26 @@ extension MobileShellComposite {
         _ item: MobileAgentFeedItem,
         _ needsInput: Bool
     ) {
-        if needsInput == item.needsInput {
-            agentFeedTriageOverridesByItemID[item.id] = nil
-        } else {
-            agentFeedTriageOverridesByItemID[item.id] = needsInput
-        }
+        let override: Bool? = needsInput == item.needsInput ? nil : needsInput
+        agentFeedTriageOverridesByItemID[item.id] = override
+        agentFeedPersistTriage(override, forRowKey: Self.agentFeedRowKey(item.id))
         if !needsInput {
             agentFeedInsertReadRowKey(for: item.id)
         }
         recomputeAgentFeedItems()
+    }
+
+    /// Clears rows from this phone's Feed timeline and its needs-input count.
+    public func clearAgentFeedItems(_ items: [MobileAgentFeedItem]) {
+        guard insertClearedAgentFeedRows(items) else { return }
+        items.forEach { agentFeedInsertReadRowKey(for: $0.id) }
+        recomputeAgentFeedItems()
+    }
+
+    /// Clears every row except requests an agent is still blocked on, which
+    /// only leave the Feed when answered or cleared one by one.
+    public func clearAllAgentFeedItems(_ items: [MobileAgentFeedItem]) {
+        clearAgentFeedItems(items.filter { !$0.needsInput })
     }
 
     /// Records a visible, explicit interaction with a row (answer, reply,
@@ -281,13 +292,22 @@ extension MobileShellComposite {
         }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            var consecutiveFailures = 0
             repeat {
                 self.agentFeedRefreshPendingMacIDs.remove(macDeviceID)
-                await self.fetchAgentFeed(
+                let succeeded = await self.fetchAgentFeed(
                     macDeviceID: macDeviceID,
                     client: client,
                     displayName: displayName
                 )
+                consecutiveFailures = succeeded ? 0 : consecutiveFailures + 1
+                // A client that fails fast would otherwise refetch in a tight
+                // loop on the main actor; after the last retry the next
+                // trigger (an event, foreground, or pull) starts over.
+                if consecutiveFailures > 0 {
+                    guard let delay = Self.agentFeedRetryDelay(afterConsecutiveFailures: consecutiveFailures),
+                          (try? await Task.sleep(for: delay)) != nil else { break }
+                }
             } while !Task.isCancelled
                 && self.agentFeedClient(for: macDeviceID) === client
                 && self.agentFeedRefreshPendingMacIDs.contains(macDeviceID)
@@ -301,11 +321,21 @@ extension MobileShellComposite {
         return task
     }
 
+    static func agentFeedRetryDelay(afterConsecutiveFailures failures: Int) -> Duration? {
+        switch failures {
+        case 1: .seconds(1)
+        case 2: .seconds(4)
+        default: nil
+        }
+    }
+
+    /// Returns false only when the list request itself failed.
+    @discardableResult
     private func fetchAgentFeed(
         macDeviceID: String,
         client: MobileCoreRPCClient,
         displayName: String
-    ) async {
+    ) async -> Bool {
         do {
             let request = try MobileCoreRPCClient.requestData(
                 method: "feed.list",
@@ -317,7 +347,7 @@ extension MobileShellComposite {
             let response = try await Self.decodeAgentFeedSnapshot(data)
             let decodedAt = ProcessInfo.processInfo.systemUptime
             guard !Task.isCancelled,
-                  agentFeedClient(for: macDeviceID) === client else { return }
+                  agentFeedClient(for: macDeviceID) === client else { return true }
             feedPerformanceObserver?.updateCompleted(stage: .fetch, startedAt: fetchStarted, endedAt: decodeStarted, itemCount: response.items.count)
             feedPerformanceObserver?.updateCompleted(stage: .decode, startedAt: decodeStarted, endedAt: decodedAt, itemCount: response.items.count)
             applyAgentFeedSnapshot(
@@ -328,10 +358,11 @@ extension MobileShellComposite {
             feedPerformanceObserver?.updateCompleted(
                 stage: .apply, startedAt: decodedAt, endedAt: ProcessInfo.processInfo.systemUptime, itemCount: agentFeedItems.count
             )
+            return true
         } catch is CancellationError {
-            return
+            return true
         } catch {
-            guard agentFeedClient(for: macDeviceID) === client else { return }
+            guard agentFeedClient(for: macDeviceID) === client else { return true }
             agentFeedLog.error(
                 "list failed mac=\(macDeviceID, privacy: .public) error=\(String(describing: error), privacy: .private)"
             )
@@ -339,6 +370,7 @@ extension MobileShellComposite {
             // transient failure; leave the mac marked pending so the next
             // trigger refetches.
             agentFeedRefreshPendingMacIDs.insert(macDeviceID)
+            return false
         }
     }
 
@@ -426,7 +458,7 @@ extension MobileShellComposite {
         var merged: [MobileAgentFeedItem] = []
         for (macDeviceID, snapshot) in agentFeedSnapshotsByMac {
             let status = agentFeedConnectionStatus(for: macDeviceID)
-            for item in snapshot.items {
+            for item in snapshot.items where !agentFeedIsCleared(item) {
                 var projected = item
                 if projected.connectionStatus != status {
                     projected = projected.updating(connectionStatus: status)
@@ -435,12 +467,15 @@ extension MobileShellComposite {
                    projected.userReply != reply {
                     projected = projected.updating(userReply: reply)
                 }
-                if let triaged = agentFeedTriageOverridesByItemID[projected.id],
+                let triage = agentFeedTriageOverridesByItemID[projected.id]
+                    ?? agentFeedPersistedTriage()[Self.agentFeedRowKey(projected.id)]
+                if let triaged = triage,
                    projected.triagedNeedsInput != triaged {
                     projected = projected.updating(triagedNeedsInput: triaged)
-                } else if agentFeedTriageOverridesByItemID[projected.id] == nil,
+                } else if triage == nil,
                           projected.triagedNeedsInput != true,
                           !projected.needsInput,
+                          Self.agentFeedShowsInTimeline(projected),
                           projected.createdAt > agentFeedUnreadBaselineLoadingIfNeeded(),
                           !agentFeedReadRowKeys.contains(Self.agentFeedRowKey(projected.id)),
                           projected.kind != .stop

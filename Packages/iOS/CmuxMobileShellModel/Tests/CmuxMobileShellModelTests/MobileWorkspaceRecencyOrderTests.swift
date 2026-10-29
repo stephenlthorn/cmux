@@ -33,6 +33,22 @@ import Testing
         #expect(ordered.map(\.id.rawValue) == ["newest", "middle", "old"])
     }
 
+    @Test func sortsByTheSameTimeTheRowShows() {
+        var previewOnly = ws("preview-only")
+        previewOnly.previewAt = at(300)
+        var epochActivity = ws("epoch-activity", activityAt: at(0))
+        epochActivity.previewAt = at(200)
+        let ordered = MobileWorkspaceRecencyOrder().displayOrder([
+            ws("none"),
+            ws("old", activityAt: at(100)),
+            epochActivity,
+            previewOnly,
+        ])
+        #expect(ordered.map(\.id.rawValue) == ["preview-only", "epoch-activity", "old", "none"])
+        #expect(epochActivity.effectiveActivityAt == at(200))
+        #expect(ws("none").effectiveActivityAt == nil)
+    }
+
     @Test func pinnedRowsStayFirstLikeTheFlatList() {
         let ordered = MobileWorkspaceRecencyOrder().displayOrder([
             ws("newest", activityAt: at(300)),

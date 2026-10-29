@@ -191,6 +191,10 @@ struct MacComputerRow: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.orange)
+                // A 44pt hit area without making the row taller.
+                .padding(14)
+                .contentShape(Rectangle())
+                .padding(-14)
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(listAuthWarningTitle)

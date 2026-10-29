@@ -83,6 +83,11 @@ public struct MobileWorkspacePreview: Identifiable, Equatable, Sendable {
     /// creation/connect time), so every row can show a relative time even with
     /// no preview. `nil` only when connected to a Mac old enough not to emit it.
     public var lastActivityAt: Date?
+    /// The one activity time the row both shows and sorts by: the last
+    /// activity, else the preview's time. Epoch placeholders count as missing.
+    public var effectiveActivityAt: Date? {
+        [lastActivityAt, previewAt].lazy.compactMap { $0 }.first { $0.timeIntervalSince1970 > 1 }
+    }
     /// Whether the workspace has unread activity on the Mac (mirrors the Mac
     /// sidebar's workspace unread badge). Drives the iMessage-style unread dot.
     /// `false` when connected to a Mac old enough not to emit it.

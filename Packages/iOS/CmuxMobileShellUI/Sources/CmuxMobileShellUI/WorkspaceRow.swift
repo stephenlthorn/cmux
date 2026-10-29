@@ -18,6 +18,9 @@ struct WorkspaceRowContent: Equatable {
     /// The trailing label: a connection problem, or the activity time at the
     /// minute precision the row shows.
     let timestampText: String
+    /// The activity time behind ``timestampText`` while connected. The label
+    /// switches from a time to a date at midnight, so the row relabels then.
+    let activityAt: Date?
     let description: String?
     let previewLine: String
     let changesChip: MobileWorkspaceChangesChip?
@@ -47,6 +50,7 @@ struct WorkspaceRowContent: Equatable {
         unreadState = workspace.unreadState
         accentColorHex = workspace.customColorHex
         timestampText = workspace.timestampOrStatus(connectionStatus: connectionStatus)
+        activityAt = connectionStatus == .connected ? workspace.effectiveActivityAt : nil
         description = workspace.displayDescription
         previewLine = workspace.previewLine
         self.changesChip = visibleChip
@@ -144,10 +148,7 @@ struct WorkspaceRow: View {
 
                     Spacer(minLength: 8)
 
-                    Text(content.timestampText)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    WorkspaceRowTimestamp(text: content.timestampText, activityAt: content.activityAt)
                 }
 
                 if let description = content.description {
@@ -242,5 +243,29 @@ struct WorkspaceColorRail: View {
             .frame(maxHeight: .infinity)
             .opacity(color == nil ? 0 : 0.95)
             .accessibilityHidden(true)
+    }
+}
+
+/// Ticks only at midnight, not every minute, so list swipes are never
+/// invalidated by a running clock.
+private struct WorkspaceRowTimestamp: View {
+    let text: String
+    let activityAt: Date?
+
+    var body: some View {
+        if let activityAt {
+            TimelineView(.periodic(from: Calendar.current.startOfDay(for: .now).addingTimeInterval(86_400), by: 86_400)) { context in
+                label(MobileWorkspacePreview.activityTimestampLabel(for: activityAt, referenceDate: max(context.date, .now)))
+            }
+        } else {
+            label(text)
+        }
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
     }
 }

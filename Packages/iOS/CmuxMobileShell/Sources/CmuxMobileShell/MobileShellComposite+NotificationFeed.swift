@@ -146,7 +146,8 @@ extension MobileShellComposite {
             entry -> MobileNotificationFeedSourceSnapshot? in
             let ownerKey = entry.key
             let items = entry.value.items.filter { item in
-                guard targetIndex.workspaceID(for: item) != nil else {
+                guard !notificationFeedIsCleared(item),
+                      targetIndex.workspaceID(for: item) != nil else {
                     return false
                 }
                 guard let parsedScopeEntries else { return true }
@@ -237,6 +238,39 @@ extension MobileShellComposite {
                 failure: DiagnosticFailureKind.classify(error),
                 count: isRead ? 1 : 0
             )
+        }
+    }
+
+    /// Clears notifications from this phone's feed and marks the unread ones
+    /// read on their Macs, so the unread badges agree on every device.
+    public func clearNotificationFeedItems(_ items: [MobileNotificationFeedItem]) async {
+        guard insertClearedNotificationFeedRows(items) else { return }
+        recomputeNotificationFeedItems()
+        let unreadByOwner = Dictionary(grouping: items.filter { !$0.isRead }) {
+            notificationFeedOwnerKey(for: $0)
+        }
+        for (ownerKey, unread) in unreadByOwner {
+            guard let target = notificationFeedTarget(for: ownerKey) else { continue }
+            let ids = unread.map(\.notificationID)
+            do {
+                let request = try MobileCoreRPCClient.requestData(
+                    method: "notification.feed.mark_read",
+                    params: ["notification_ids": ids]
+                )
+                let data = try await target.client.sendRequest(request)
+                let response = try MobileNotificationFeedMutationResponse.decode(data)
+                guard notificationFeedClient(for: target.ownerKey) === target.client else { continue }
+                applyNotificationFeedReadStateMutation(
+                    macDeviceID: target.ownerKey,
+                    notificationIDs: ids,
+                    isRead: true,
+                    revision: response.revision
+                )
+            } catch {
+                notificationFeedLog.error(
+                    "clear mark-read failed mac=\(ownerKey, privacy: .public) error=\(String(describing: error), privacy: .private)"
+                )
+            }
         }
     }
 
@@ -624,7 +658,7 @@ extension MobileShellComposite {
         let projected = notificationFeedSnapshotsByMac.map { macDeviceID, snapshot in
             let status = notificationFeedConnectionStatus(for: macDeviceID)
             return MobileNotificationFeedSourceSnapshot(
-                items: snapshot.items,
+                items: snapshot.items.filter { !notificationFeedIsCleared($0) },
                 connectionStatus: status
             )
         }

@@ -25,6 +25,10 @@ struct AgentFeedActions {
     }
     /// Local needs-input triage — the Feed's mark-read/unread analogue.
     var setNeedsInput: @MainActor (MobileAgentFeedItem, Bool) -> Void = { _, _ in }
+    /// Removes one row from this phone's Feed.
+    var clear: @MainActor (MobileAgentFeedItem) -> Void = { _ in }
+    /// Removes every listed row except requests still waiting on an answer.
+    var clearAll: @MainActor ([MobileAgentFeedItem]) -> Void = { _ in }
     var refresh: @MainActor () async -> Void = {}
     var filterChanged: @MainActor (AgentFeedFilter) -> Void = { _ in }
 }
@@ -225,6 +229,12 @@ struct AgentFeedRow: View, Equatable {
                     Label(String(localized: "mobile.agentFeed.open", defaultValue: "Open", bundle: .module),
                           systemImage: "rectangle.stack")
                 }
+            }
+            Button(role: .destructive) {
+                actions.clear(model.item)
+            } label: {
+                Label(String(localized: "mobile.agentFeed.clear", defaultValue: "Clear", bundle: .module),
+                      systemImage: "xmark.circle")
             }
         }
     }

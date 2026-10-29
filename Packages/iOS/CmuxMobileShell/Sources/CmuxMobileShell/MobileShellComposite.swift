@@ -491,6 +491,12 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
     var agentFeedReadRowKeys: Set<String> = []
     var agentFeedReadRowKeyOrder: [String] = []
     var agentFeedUnreadBaseline: Date?
+    /// Where rows the user cleared from the Notifications and Feed tabs are
+    /// remembered; `nil` keeps them in memory only.
+    @ObservationIgnored var feedLocalStateDefaults: UserDefaults? = .standard
+    @ObservationIgnored var notificationFeedClearedRowsCache: MobileFeedClearedRows?
+    @ObservationIgnored var agentFeedClearedRowsCache: MobileFeedClearedRows?
+    @ObservationIgnored var agentFeedPersistedTriageCache: [String: Bool]?
     var agentFeedRefreshTasksByMac: [String: Task<Void, Never>] = [:]
     var agentFeedRefreshPendingMacIDs: Set<String> = []
     var agentFeedSuccessfulMacIDs: Set<String> = []

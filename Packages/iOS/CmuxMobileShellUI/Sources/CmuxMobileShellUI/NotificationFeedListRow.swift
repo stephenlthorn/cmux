@@ -6,6 +6,9 @@ struct NotificationFeedListRow: Identifiable, Equatable, Sendable {
     let model: NotificationFeedRowModel
     let context: NotificationFeedRowContext
     let disclosure: NotificationFeedDisclosure?
+    /// What a Clear on this row removes: a collapsed group clears with its
+    /// hidden history, anything else clears only itself.
+    let clearItems: [MobileNotificationFeedItem]
 
     var id: MobileNotificationFeedItemID { model.id }
 }
@@ -68,14 +71,16 @@ struct NotificationFeedActivityGroup: Identifiable, Equatable, Sendable {
         var result = [NotificationFeedListRow(
             model: latest,
             context: .standalone,
-            disclosure: disclosure
+            disclosure: disclosure,
+            clearItems: isExpanded ? [latest.item] : items.map(\.item)
         )]
         if isExpanded {
             result += items.dropFirst().map { model in
                 NotificationFeedListRow(
                     model: model,
                     context: model.presentation.nestedContext(under: latest.presentation),
-                    disclosure: nil
+                    disclosure: nil,
+                    clearItems: [model.item]
                 )
             }
         }

@@ -9,6 +9,10 @@ struct NotificationFeedActions {
     let markRead: @MainActor (MobileNotificationFeedItem) -> Void
     let markUnread: @MainActor (MobileNotificationFeedItem) -> Void
     let markAllRead: @MainActor () -> Void
+    /// Removes rows from this phone's feed; unread ones are marked read.
+    var clear: @MainActor ([MobileNotificationFeedItem]) -> Void = { _ in }
+    /// Clears every notification in the current computer scope.
+    var clearAll: @MainActor () -> Void = {}
     let refresh: @MainActor @Sendable () async -> Void
     let loadMore: @MainActor () -> Void
     let filterChanged: @MainActor (MobileNotificationFeedFilter) -> Void
@@ -24,6 +28,7 @@ struct NotificationFeedView: View {
     /// Mark-all-read cannot be undone in one gesture, so the toolbar button
     /// only arms this confirmation instead of mutating directly.
     @State private var isConfirmingMarkAllRead = false
+    @State private var isConfirmingClearAll = false
 
     var body: some View {
         @Bindable var projection = projection
@@ -67,8 +72,46 @@ struct NotificationFeedView: View {
                     .accessibilityIdentifier("MobileNotificationFeedMarkAllRead")
                 }
 
+                if projection.sourceItemCount > 0 {
+                    Button {
+                        isConfirmingClearAll = true
+                    } label: {
+                        Label(
+                            L10n.string("mobile.notificationFeed.clearAll", defaultValue: "Clear All"),
+                            systemImage: "xmark.bin"
+                        )
+                        .labelStyle(.iconOnly)
+                    }
+                    .accessibilityLabel(
+                        L10n.string("mobile.notificationFeed.clearAll", defaultValue: "Clear All")
+                    )
+                    .accessibilityIdentifier("MobileNotificationFeedClearAll")
+                }
+
                 NotificationFeedFilterMenu(selection: $projection.filter)
             }
+        }
+        .confirmationDialog(
+            L10n.string(
+                "mobile.notificationFeed.clearAll.confirmTitle",
+                defaultValue: "Clear all notifications from this iPhone?"
+            ),
+            isPresented: $isConfirmingClearAll,
+            titleVisibility: .visible
+        ) {
+            Button(
+                L10n.string("mobile.notificationFeed.clearAll", defaultValue: "Clear All"),
+                role: .destructive
+            ) {
+                actions.clearAll()
+            }
+            .accessibilityIdentifier("MobileNotificationFeedClearAllConfirm")
+            Button(L10n.string("mobile.common.cancel", defaultValue: "Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.string(
+                "mobile.notificationFeed.clearAll.confirmMessage",
+                defaultValue: "They are marked read on your Macs and stay in each Mac's own history."
+            ))
         }
         .alert(
             L10n.string(
@@ -90,6 +133,9 @@ struct NotificationFeedView: View {
         .task {
             guard refreshesOnAppear else { return }
             await actions.refresh()
+        }
+        .task {
+            await MobileMinuteClock.run { projection.advanceReferenceDate(to: $0) }
         }
         .onChange(of: projection.filter) { _, filter in
             actions.filterChanged(filter)
@@ -162,6 +208,7 @@ private struct NotificationFeedList: View {
                                 actions: actions,
                                 context: row.context,
                                 disclosure: row.disclosure,
+                                clearItems: row.clearItems,
                                 toggleGroup: {
                                     guard let disclosure = row.disclosure else { return }
                                     withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
