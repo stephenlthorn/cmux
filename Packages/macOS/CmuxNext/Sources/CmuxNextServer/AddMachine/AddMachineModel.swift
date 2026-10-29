@@ -430,7 +430,8 @@ public final class AddMachineModel {
 
     /// Runs one command into the checklist; its report, or nil when it ended without one.
     private func stream(_ command: HostCommand) async -> HostReport? {
-        checklist.start()
+        // A joined machine's check runs other steps than enroll's: it shows the ones it sends.
+        checklist.start(steps: command.needsAccount ? [] : HostStep.known)
         var report: HostReport?
         do {
             for try await line in services.run(command) {

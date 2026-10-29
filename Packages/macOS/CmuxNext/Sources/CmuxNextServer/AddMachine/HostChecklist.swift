@@ -27,9 +27,10 @@ public nonisolated struct HostChecklist: Equatable, Sendable {
 
     public private(set) var rows: [Row]
 
-    /// Every known step pending: the card before a run starts.
-    public init() {
-        rows = HostStep.known.map { Row(step: $0, status: .pending) }
+    /// Every step of `steps` pending: the card before a run starts. By default the enroll and
+    /// doctor steps; a joined machine's check starts empty and lists the steps its run sends.
+    public init(steps: [HostStep] = HostStep.known) {
+        rows = steps.map { Row(step: $0, status: .pending) }
     }
 
     /// The rows of a finished report (a doctor run shown again).
@@ -38,9 +39,9 @@ public nonisolated struct HostChecklist: Equatable, Sendable {
         finish(report)
     }
 
-    /// A run starts: every row pending, the first running.
-    public mutating func start() {
-        self = HostChecklist()
+    /// A run starts: every row of `steps` pending, the first running.
+    public mutating func start(steps: [HostStep] = HostStep.known) {
+        self = HostChecklist(steps: steps)
         markNextRunning()
     }
 
@@ -71,6 +72,8 @@ public nonisolated struct HostChecklist: Equatable, Sendable {
     /// The run stopped without a report (the CLI could not start, crashed or was cancelled): the
     /// running step fails with `detail`, the rest stay pending.
     public mutating func stop(_ detail: String) {
+        // A run that starts with no rows (a joined machine's check) still says why it stopped.
+        if rows.isEmpty { rows = [Row(step: HostStep(rawValue: "check"), status: .pending)] }
         guard let index = rows.firstIndex(where: { $0.status == .running }) ?? rows.firstIndex(where: { $0.status == .pending }) else { return }
         rows[index].status = .done(.fail)
         rows[index].detail = detail

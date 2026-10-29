@@ -142,6 +142,7 @@ import Testing
         #expect(host.recorded.map(\.0) == ["joined:m_1"], "the row's mark follows the check")
         #expect(!model.buttons.map(\.action).contains(.fix), "the minting end fixes nothing on another machine")
         #expect(model.buttons.map(\.action) == [.copyDetails, .done])
+        #expect(model.checklist.rows.map(\.step.rawValue) == ["listed", "heartbeat"], "only the steps the joined check sent, no ssh enroll rows")
     }
 
     @Test func theJoinedCardOffersShowInMachines() async {
@@ -216,6 +217,16 @@ import Testing
         let parts = run.stdout.components(separatedBy: "|")
         #expect(parts.first == secret, "the run read it on stdin")
         #expect(!parts.dropFirst().joined().contains(secret), "not in the run's environment or argv")
+    }
+
+    @Test func aJoinedCheckThatCannotStartSaysWhy() async {
+        let host = AddMachineFlowTests.FakeHost()
+        host.scripts = [[]]
+        host.stops = [HostCLIStopFixture(message: "Sign in to cmux to check this machine.")]
+        let model = AddMachineModel(services: host.services())
+        model.beginJoinedCheck(id: "m_1", name: "lane-vm-3")
+        _ = await model.finished()
+        #expect(model.checklist.failing?.detail == "Sign in to cmux to check this machine.")
     }
 
     @Test func checkOnADaemonRowRecordsUnderThatRow() async {
