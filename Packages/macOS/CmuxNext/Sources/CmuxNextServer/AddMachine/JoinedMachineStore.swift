@@ -49,12 +49,13 @@ public final class JoinedMachineStore {
     public func perform(_ change: Change, _ id: String) async -> Bool {
         guard let service = service(), !busy.contains(id) else { return false }
         busy.insert(id)
+        // Busy until the read after it lands, so a second click cannot start another meanwhile.
+        defer { busy.remove(id) }
         failed[id] = nil
         let ok = switch change {
         case .revoke: await service.revoke(id)
         case .rotate: await service.rotate(id)
         }
-        busy.remove(id)
         await refresh()
         if !ok { failed[id] = change }
         return ok

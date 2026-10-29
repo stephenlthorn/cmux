@@ -1,4 +1,5 @@
 import AppKit
+import CmuxNextRemote
 @testable import CmuxNextServer
 import Foundation
 import SwiftUI
@@ -157,6 +158,45 @@ import Testing
         #expect(model.perform(.showMachines), "Show in Machines closes the card")
         #expect(shown == 1)
         #expect(model.joinLine?.isWatching == false)
+    }
+
+    @Test func aRevokeStaysBusyUntilItsReadLands() async {
+        final class Gate: @unchecked Sendable { var held: CheckedContinuation<Void, Never>?; var rotated = 0 }
+        let gate = Gate()
+        let rows = [Fake.machine("m_1", "lane-vm-3")]
+        let store = JoinedMachineStore(service: {
+            MachineJoinService(mint: { _ in .failure(.failed) }, list: { rows },
+                               revoke: { _ in await withCheckedContinuation { gate.held = $0 }; return true },
+                               rotate: { _ in gate.rotated += 1; return true })
+        })
+        await store.refresh()
+        let first = Task { await store.perform(.revoke, "m_1") }
+        for _ in 0..<1000 where gate.held == nil { await Task.yield() }
+        #expect(store.busy.contains("m_1"))
+        #expect(!(await store.perform(.rotate, "m_1")), "a second change while the first is in flight is refused")
+        gate.held?.resume()
+        #expect(await first.value)
+        #expect(store.busy.isEmpty)
+        #expect(gate.rotated == 0)
+    }
+
+    @Test func aJoinedMachineTheAppConnectsToStaysOneLinkedRow() {
+        let machine = Fake.machine("m_1", "lane-vm-3", mesh: "ssh-7")
+        let linked = MachineSectionRow(id: "ssh-7", name: "lane-vm-3", isConnected: true, isLocal: false, joined: machine)
+        #expect(linked.isLinked, "the daemon's row keeps New Workspace")
+        #expect(!MachineSectionRow.joined(machine, health: nil).isLinked, "a mesh-only row has no workspace link")
+        #expect(MachineSectionRow(id: "ssh-8", name: "x", isConnected: true, isLocal: false).isLinked)
+    }
+
+    @Test func theSecretReachesTheCLIOnStdinOnly() async throws {
+        let secret = "cmux-access-\(UUID().uuidString)"
+        let cli = HostCLI(binary: URL(fileURLWithPath: "/bin/sh"), environment: { ["PATH": "/usr/bin:/bin"] })
+        let run = try #require(await cli.run(["-c", #"read t; printf '%s|' "$t"; env; printf '|%s' "$0 $*""#, "sh", "--cloud-token-stdin"],
+                                             secret: secret, label: "secret test"))
+        #expect(run.status == 0)
+        let parts = run.stdout.components(separatedBy: "|")
+        #expect(parts.first == secret, "the run read it on stdin")
+        #expect(!parts.dropFirst().joined().contains(secret), "not in the run's environment or argv")
     }
 
     /// The row and its menu as a picture: `Packages/macOS/CmuxNext/.build/machines-joined-rows.png`.

@@ -14,7 +14,7 @@ enum DebugJoinedMachines {
     /// The joined machines' calls while set (``AppServices/joinedMachines``).
     static var service: MachineJoinService?
 
-    static let rows = [
+    nonisolated static let rows = [
         JoinedMachine(id: "m_lane", name: "lane-vm-3", state: .online, platform: "linux", hostname: "lane-vm-3",
                       joinTokenId: "jt_1", mintedBy: "you@example.com"),
         JoinedMachine(id: "m_gpu", name: "gpu-west", state: .offline, platform: "linux", joinTokenId: "jt_2", mintedBy: "sam@example.com"),

@@ -44,6 +44,10 @@ public nonisolated struct MachineSectionRow: Identifiable, Hashable, Sendable {
         self.joined = joined
     }
 
+    /// Whether the row is a machine the app connects to (it can open a workspace), not a joined
+    /// machine reached through the mesh alone.
+    public var isLinked: Bool { joined == nil || id != joined.map { JoinedMachine.healthID($0.id) } }
+
     /// The row of a joined machine, with its last Check from `health`.
     public static func joined(_ machine: JoinedMachine, health: HostReport?) -> MachineSectionRow {
         MachineSectionRow(id: JoinedMachine.healthID(machine.id), name: machine.name, isConnected: machine.state == .online, isLocal: false,
@@ -99,7 +103,8 @@ public struct MachineSectionListView: View {
             ForEach(rows) { row in
                 if let joined = row.joined {
                     JoinedMachineRowView(row: row, machine: joined, busy: joinedStore?.busy.contains(joined.id) == true,
-                                         failed: joinedStore?.failed[joined.id], store: joinedStore, perform: joinedAction)
+                                         failed: joinedStore?.failed[joined.id], store: joinedStore, newWorkspace: newWorkspace,
+                                         perform: joinedAction)
                 } else {
                 HStack(alignment: .center, spacing: Metrics.panelInset) {
                     Icon(row.isLocal ? .machineLocal : .machineRemote, size: Metrics.iconSize)

@@ -29,6 +29,8 @@ struct JoinedMachineRowView: View {
     let failed: JoinedMachineStore.Change?
     /// Holds which row's menu is open (nil in a picture with no store).
     let store: JoinedMachineStore?
+    /// New Workspace on a row the app also connects to (`workspace.newOnMachine`).
+    let newWorkspace: @MainActor (String) -> Void
     let perform: @MainActor (JoinedMachineAction, JoinedMachine) -> Void
 
     @State private var rowHovered = false
@@ -42,7 +44,7 @@ struct JoinedMachineRowView: View {
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: Metrics.space2) {
-                    Text(verbatim: machine.name).font(Font(Typography.body)).lineLimit(1)
+                    Text(verbatim: row.name).font(Font(Typography.body)).lineLimit(1)
                     MachineHealthDot(health: row.health)
                 }
                 Text(verbatim: JoinedMachineStrings.caption(machine, failed: failed))
@@ -61,12 +63,19 @@ struct JoinedMachineRowView: View {
                 menuButton
                     .opacity(rowHovered || menuOpen ? 1 : 0)
             }
-            // Workspaces need a link to the machine; a joined one is reached through the mesh alone.
-            Button {} label: { Image(systemName: "plus") }
-                .buttonStyle(.borderless)
-                .disabled(true)
-                .themedHelp(JoinedMachineStrings.noWorkspace)
-                .accessibilityLabel(Text(AddMachineStrings.newWorkspace))
+            // Workspaces need a link to the machine; one reached through the mesh alone has none.
+            if row.isLinked {
+                Button { newWorkspace(row.id) } label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .disabled(!row.isConnected)
+                    .accessibilityLabel(Text(AddMachineStrings.newWorkspace))
+            } else {
+                Button {} label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .disabled(true)
+                    .themedHelp(JoinedMachineStrings.noWorkspace)
+                    .accessibilityLabel(Text(AddMachineStrings.newWorkspace))
+            }
         }
         .padding(.vertical, 2).padding(.horizontal, Metrics.panelInset)
         .contentShape(Rectangle())

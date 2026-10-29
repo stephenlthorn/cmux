@@ -16,6 +16,8 @@ final class MachineSectionHostView: NSView, RightSidebarRefreshing {
     private var observation: Task<Void, Never>?
     /// The joined list's read in flight (a newer show replaces it).
     private var joinedRead: Task<Void, Never>?
+    /// Reads the joined list again when Labs `labs.machineJoin` turns on or off (off empties it).
+    private var switchWatch: Task<Void, Never>?
 
     init(services: AppServices) {
         machines = services.machines
@@ -46,6 +48,17 @@ final class MachineSectionHostView: NSView, RightSidebarRefreshing {
                 self?.model.update(rows)
             }
         }
+        // task-owner: follows the switch for the section's life; deinit cancels it. Its first value
+        // is the switch now, which the refresh above already read.
+        switchWatch = Task { [weak services] in
+            var last: Bool?
+            // Any setting's change re-reads the snapshot: only a change of this switch reads the list.
+            for await on in ObservationStream({ services?.settings?.snapshot.machineJoin == true }) {
+                defer { last = on }
+                guard let last, last != on else { continue }
+                await joined.refresh()
+            }
+        }
     }
 
     @available(*, unavailable)
@@ -56,6 +69,7 @@ final class MachineSectionHostView: NSView, RightSidebarRefreshing {
     nonisolated deinit {
         observation?.cancel()
         joinedRead?.cancel()
+        switchWatch?.cancel()
     }
 
     func refresh() {
