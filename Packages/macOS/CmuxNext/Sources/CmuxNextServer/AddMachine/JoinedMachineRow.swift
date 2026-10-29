@@ -164,9 +164,9 @@ public nonisolated enum JoinedMachineStrings {
         String(localized: key, defaultValue: value, table: "AddMachine", bundle: .module)
     }
 
-    /// How long a revoked machine keeps access: it loses it on its next heartbeat. A placeholder
-    /// until the platform states its heartbeat interval.
-    public static let heartbeatSecondsPlaceholder = 60
+    /// How long a revoked machine keeps access at most: the platform's heartbeat interval. Every
+    /// heartbeat and relay request checks live revocation, so it is cut off at the next one.
+    public static let heartbeatSeconds = 30
 
     static func title(_ action: JoinedMachineAction) -> String {
         switch action {
@@ -196,7 +196,7 @@ public nonisolated enum JoinedMachineStrings {
     public static func revokeTitle(_ name: String) -> String { String(format: s("machines.joined.revokeTitle", "Revoke %@?"), name) }
     public static var revokeBody: String {
         String(format: s("machines.joined.revokeBody", "It leaves your team's machines. Its access ends on its next heartbeat, within %lld seconds. To use it again, paste a new line on it."),
-               heartbeatSecondsPlaceholder)
+               heartbeatSeconds)
     }
     public static var revokeButton: String { s("machines.joined.revokeButton", "Revoke") }
 }

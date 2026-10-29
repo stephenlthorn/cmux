@@ -123,7 +123,8 @@ import Testing
 
     @Test func revokeAsksWithTheHeartbeatBound() {
         #expect(JoinedMachineStrings.revokeTitle("lane-vm-3") == "Revoke lane-vm-3?")
-        #expect(JoinedMachineStrings.revokeBody.contains("\(JoinedMachineStrings.heartbeatSecondsPlaceholder) seconds"))
+        #expect(JoinedMachineStrings.heartbeatSeconds == 30)
+        #expect(JoinedMachineStrings.revokeBody.contains("within 30 seconds"))
     }
 
     @Test func checkRunsMachineDoctorWithTheAccountOnStdinAndOffersNoFix() async {
