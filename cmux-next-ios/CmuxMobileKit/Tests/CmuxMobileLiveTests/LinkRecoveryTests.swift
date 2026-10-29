@@ -120,19 +120,23 @@ private final class RecoveryDialer: MacLinkDialer, @unchecked Sendable {
     /// Run this unchanged against base and head for the Performance table.
     /// It reports actual elapsed time; the separate budget test guards policy.
     @Test func silentDropDetectionBenchmark() async throws {
-        let dialer = RecoveryDialer()
-        let controller = controller(dialer)
-        defer { controller.send(.target(nil)) }
-        try await eventually { controller.phase.isConnected }
-        // Let any initial probe finish; the drop occurs just after link up,
-        // covering the worst position in the heartbeat cycle on both refs.
-        try await Task.sleep(for: .milliseconds(50))
-        dialer.first.dropSilently()
-        let start = ContinuousClock.now
-        try await eventually({ dialer.dials >= 2 }, within: .seconds(26))
-        let elapsed = ContinuousClock.now - start
-        print("LINK_RECOVERY silent_drop_ms=\(milliseconds(elapsed))")
-        #expect(elapsed <= LinkController.heartbeat + LinkController.probeTimeout + LinkController.probeGrace + .seconds(1))
+        // Throwaway reporting only: three runs, reported as one recorded issue
+        // (the sim step keeps failure messages, not stdout).
+        var results: [String] = []
+        for _ in 1...3 {
+            let dialer = RecoveryDialer()
+            let controller = controller(dialer)
+            try await eventually { controller.phase.isConnected }
+            try await Task.sleep(for: .milliseconds(50))
+            dialer.first.dropSilently()
+            let start = ContinuousClock.now
+            let deadline = start + .seconds(30)
+            while dialer.dials < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+            let elapsed = ContinuousClock.now - start
+            results.append(dialer.dials >= 2 ? String(format: "%.0f", milliseconds(elapsed)) : "timeout30000")
+            controller.send(.target(nil))
+        }
+        Issue.record("LINK_RECOVERY silent_drop_ms=\(results.joined(separator: ","))")
     }
 
     private func milliseconds(_ duration: Duration) -> Double {
