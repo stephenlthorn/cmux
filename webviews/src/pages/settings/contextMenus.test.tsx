@@ -63,20 +63,24 @@ const rowY = (container: HTMLElement, key: string) =>
     24 +
   100;
 
-/** Presses `key`'s grip, moves the pointer to `y`, then releases: the person's drag. */
-async function dragRow(container: HTMLElement, key: string, y: number, check?: () => void) {
+/** Where `key`'s row shows while `dragged` (one row) is lifted out: the rows below it move up a row. */
+const liftedY = (container: HTMLElement, key: string, dragged: string) =>
+  rowY(container, key) - (rowY(container, key) > rowY(container, dragged) ? 24 : 0);
+
+/** Presses `key`'s grip, moves the pointer to `y` (and `dx` sideways), then releases: the person's drag. */
+async function dragRow(container: HTMLElement, key: string, y: number, check?: () => void, dx = 0) {
   layOut(container);
   const grip = row(container, key).querySelector<HTMLElement>(".menu-row-grip")!;
-  const pointer = (type: string, clientY: number) =>
+  const pointer = (type: string, clientY: number, clientX = 40) =>
     act(async () => {
-      grip.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientY }));
+      grip.dispatchEvent(new window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY }));
     });
   const start = rowY(container, key) + 12;
   await pointer("pointerdown", start);
   await pointer("pointermove", start + (y > start ? 6 : -6));
-  await pointer("pointermove", y);
+  await pointer("pointermove", y, 40 + dx);
   check?.();
-  await pointer("pointerup", y);
+  await pointer("pointerup", y, 40 + dx);
   await settle();
 }
 
@@ -136,16 +140,55 @@ test("a submenu never moves into itself", async () => {
   page.unmount();
 });
 
-test("dragging a row onto a submenu's middle puts it in that submenu", async () => {
+test("dragging a row onto a closed submenu's name puts it in that submenu", async () => {
   const page = await renderPage({ path: "/settings/menus?focus=workspaceRow" });
   await settle();
-  await dragRow(page.container, "renameWorkspace", rowY(page.container, "folder:move") + 12, () => {
+  // Rename lifted out, Move ▸ shows a row higher: its middle there.
+  await dragRow(page.container, "renameWorkspace", liftedY(page.container, "folder:move", "renameWorkspace") + 12, () => {
     expect(row(page.container, "folder:move").hasAttribute("data-drop-into")).toBe(true);
   });
   expect(keys(folder(saved(page.provider)!.items, "folder:move")).at(-1)).toBe("renameWorkspace");
   // The submenu opens to show where it went.
   expect(drawn(page.container)).toContain("1:renameWorkspace");
   page.unmount();
+});
+
+test("dragging a row between two rows of an open submenu puts it there, the gap opening there", async () => {
+  const page = await renderPage({ path: "/settings/menus?focus=workspaceRow" });
+  await settle();
+  // Between Copy Path and Reveal in Finder, More's first two rows.
+  await dragRow(page.container, "renameWorkspace", liftedY(page.container, "revealWorkspaceInFinder", "renameWorkspace"), () => {
+    // The gap opens under Copy Path: Reveal moves down into its old place, Copy Path stays up.
+    expect(row(page.container, "revealWorkspaceInFinder").style.transform).toBe("");
+    expect(row(page.container, "workspace.copyPath").style.transform).toBe("translateY(-24px)");
+    // The dragged row moves one level in, to the depth it lands at.
+    expect(row(page.container, "renameWorkspace").style.transform).toContain("translate(18px");
+  });
+  expect(keys(folder(saved(page.provider)!.items, "folder:more"))).toEqual([
+    "workspace.copyPath",
+    "renameWorkspace",
+    "revealWorkspaceInFinder",
+    "folder:options",
+  ]);
+  page.unmount();
+});
+
+test("at the end of a submenu, sideways travel picks inside it or after it", async () => {
+  const page = await renderPage({ path: "/settings/menus?focus=workspaceRow" });
+  await settle();
+  // Just under More's last row (Options ▸) and above the separator after More.
+  const end = liftedY(page.container, "folder:options", "renameWorkspace") + 26;
+  await dragRow(page.container, "renameWorkspace", end, undefined, 18);
+  expect(keys(folder(saved(page.provider)!.items, "folder:more")).at(-1)).toBe("renameWorkspace");
+  page.unmount();
+
+  const again = await renderPage({ path: "/settings/menus?focus=workspaceRow" });
+  await settle();
+  await dragRow(again.container, "renameWorkspace", liftedY(again.container, "folder:options", "renameWorkspace") + 26);
+  const top = keys(saved(again.provider)?.items);
+  expect(top.indexOf("renameWorkspace")).toBe(top.indexOf("folder:more") + 1);
+  expect(keys(folder(saved(again.provider)!.items, "folder:more"))).not.toContain("renameWorkspace");
+  again.unmount();
 });
 
 test("dragging a row out of a submenu puts it where it is dropped, the gap opening there", async () => {

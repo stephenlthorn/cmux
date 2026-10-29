@@ -12,7 +12,7 @@ import { nativeMenu, pickedId } from "../../../ui/nativeMenu";
 import { useSettingsRouter, useSettingsState, useStore } from "../context";
 import { Switch } from "../editors/ToggleEditor";
 import { Icon } from "../icons";
-import { DRAG_THRESHOLD, INDENT, block, dropTarget, rowBoxes, shift, type DropTarget, type RowBox } from "../menuDrag";
+import { DRAG_THRESHOLD, INDENT, block, dropTarget, rowBoxes, shifts, type DropTarget, type RowBox } from "../menuDrag";
 import {
   MORE,
   SEPARATOR,
@@ -50,6 +50,7 @@ const AREAS = ["workspace", "tabs", "terminal", "browser", "other"] as const;
 type Dragging = {
   path: Path;
   depth: number;
+  startX: number;
   startY: number;
   dy: number;
   active: boolean;
@@ -58,6 +59,8 @@ type Dragging = {
   last: number;
   height: number;
   target: DropTarget | null;
+  /** How far each other row slides, by its drawn index. */
+  slide: Map<number, number>;
 };
 
 const pathKey = (path: Path) => path.join(".");
@@ -205,7 +208,20 @@ export function ContextMenusCard({ focus }: { focus: string | null }) {
       if (event.button !== 0) return;
       event.preventDefault();
       event.currentTarget.setPointerCapture?.(event.pointerId);
-      setDragging({ path, depth, startY: event.clientY, dy: 0, active: false, rows: [], first: 0, last: 0, height: 0, target: null });
+      setDragging({
+        path,
+        depth,
+        startX: event.clientX,
+        startY: event.clientY,
+        dy: 0,
+        active: false,
+        rows: [],
+        first: 0,
+        last: 0,
+        height: 0,
+        target: null,
+        slide: new Map(),
+      });
     },
     onPointerMove: (event: PointerEvent<HTMLElement>) => {
       const element = list.current;
@@ -218,8 +234,9 @@ export function ContextMenusCard({ focus }: { focus: string | null }) {
       // jsdom has no layout: a row is 24 px there, as the page draws it.
       const measured = (rows[last]?.bottom ?? 0) - (rows[first]?.top ?? 0);
       const height = dragging.active ? dragging.height : measured > 0 ? measured : 24 * (last - first + 1);
-      const target = dropTarget(rows, event.clientY, path, layout.items.length);
-      setDragging({ ...dragging, dy, active: true, rows, first, last, height, target });
+      const target = dropTarget(rows, path, height, event.clientY, event.clientX - dragging.startX);
+      const slide = shifts(rows, first, last, height, target ? target.slot : undefined);
+      setDragging({ ...dragging, dy, active: true, rows, first, last, height, target, slide });
     },
     onPointerUp: () => {
       const done = dragging;
@@ -239,7 +256,7 @@ export function ContextMenusCard({ focus }: { focus: string | null }) {
       const dx = dragging.target ? (dragging.target.depth - dragging.depth) * INDENT : 0;
       return { transform: `translate(${dx}px, ${dragging.dy}px)` };
     }
-    const by = shift(flat, dragging.first, dragging.last, dragging.target?.flat ?? null, dragging.height);
+    const by = dragging.slide.get(flat);
     return by ? { transform: `translateY(${by}px)` } : undefined;
   };
 
