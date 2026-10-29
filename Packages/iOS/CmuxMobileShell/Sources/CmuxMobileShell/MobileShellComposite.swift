@@ -1410,6 +1410,13 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
     private var createTerminalTask: Task<Void, Never>?
     var workspaceListRefreshTask: Task<Bool, Never>?
     private var workspaceListRefreshOperationID: UUID?
+    /// Operation and client of the event-driven legacy refetch, when it owns
+    /// ``workspaceListRefreshTask``; same-client events coalesce onto it.
+    private var workspaceListEventRefreshOperationID: UUID?
+    private var workspaceListEventRefreshClientID: ObjectIdentifier?
+    /// Set while the event-driven refetch is in flight to request one
+    /// trailing fetch after it settles.
+    private var workspaceListEventRefreshFollowUpRequested = false
     /// Advances before every foreground `workspace.updated` refetch. Promotion
     /// rejects its own handoff snapshot when a newer event races that fetch.
     var workspaceListEventGeneration: UInt64 = 0
@@ -4005,7 +4012,17 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
         var changed = false
         for (key, cached) in snapshots {
             guard !isHiddenMacPairingKey(key, hiddenIDs: hiddenIDs) else { continue }
-            guard workspacesByMac[key]?.status != .connected else { continue }
+            // Hydrate only a Mac that has no rows yet. This runs on every
+            // paired-Mac load (the Computers screen ticks every 10s), and an
+            // existing entry is either live or holds rows retained from a
+            // dropped session (e.g. a sleeping secondary marked unavailable),
+            // both at least as fresh as a snapshot written only while that
+            // Mac was foreground. Overwriting them would resurrect closed
+            // workspaces and reset status and action capabilities.
+            if let existing = workspacesByMac[key],
+               existing.status == .connected || !existing.workspaces.isEmpty {
+                continue
+            }
             workspacesByMac[key] = cached
             changed = true
         }
@@ -11833,6 +11850,11 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
             guard isCurrentRemoteConnection(client: client, generation: generation) else {
                 return false
             }
+            // Re-check authority after the await, as `reloadWorkspaceListFromMac`
+            // does: v2 can negotiate while this full list is in flight, and the
+            // older list must not overwrite the mirror's projection. The
+            // round-trip succeeded; the mirror owns the list.
+            guard !stateSyncActive else { return true }
             let activeTicketWorkspaceID = activeTicket.map { MobileWorkspacePreview.ID(rawValue: $0.workspaceID) }
             applyRemoteWorkspaceList(
                 response,
@@ -16828,7 +16850,7 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
     }
 
     private func scheduleWorkspaceListRefreshFromEvent() {
-        guard remoteClient != nil else { return }
+        guard let client = remoteClient else { return }
         // With state sync v2 negotiated, `workspace.updated` is redundant with
         // the `mobile.sync.delta` stream (the Mac emits both on the same tick
         // for old and new phones); the delta already carried the change, so
@@ -16841,25 +16863,50 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
         // State-sync events above have their own revision authority and must
         // not look like unawaited legacy work to pooled-client promotion.
         workspaceListEventGeneration &+= 1
-        // Keep the event path's "latest event wins" semantics: a `workspace.updated`
-        // arriving mid-fetch restarts the fetch so the applied list reflects the
-        // change the Mac pushed *after* this fetch started. This cancels only the
-        // event-driven task handle; the user pull-to-refresh runs on its own
-        // (``pullToRefreshTask``) so an event can never truncate its spinner.
+        // Single-flight per client with one trailing fetch: a `workspace.updated`
+        // arriving mid-fetch requests a follow-up instead of restarting the
+        // fetch, so the applied list still reflects the change the Mac pushed
+        // *after* this fetch started. Cancel-and-replace starved convergence
+        // under sustained churn (an agent retitling its terminal every ~80ms
+        // over a slow link cancelled every fetch before it landed), the same
+        // reason the v2 runner moved off it. Only a different client's event
+        // replaces the task. This touches only the event-driven task handle;
+        // the user pull-to-refresh runs on its own (``pullToRefreshTask``) so
+        // an event can never truncate its spinner.
+        if workspaceListRefreshTask != nil,
+           workspaceListRefreshOperationID == workspaceListEventRefreshOperationID,
+           workspaceListEventRefreshClientID == ObjectIdentifier(client) {
+            workspaceListEventRefreshFollowUpRequested = true
+            return
+        }
+        startEventWorkspaceListRefresh(client: client)
+    }
+
+    /// Starts one event-driven legacy refetch. A follow-up requested while it
+    /// is in flight starts exactly one trailing refetch when it settles. Each
+    /// fetch is its own task, so promotion's raced-event wait on
+    /// ``workspaceListRefreshTask`` resolves per landed fetch, not per burst.
+    private func startEventWorkspaceListRefresh(client: MobileCoreRPCClient) {
         workspaceListRefreshTask?.cancel()
         let operationID = UUID()
         workspaceListRefreshOperationID = operationID
+        workspaceListEventRefreshOperationID = operationID
+        workspaceListEventRefreshClientID = ObjectIdentifier(client)
+        workspaceListEventRefreshFollowUpRequested = false
         workspaceListRefreshTask = Task { @MainActor [weak self] in
             guard let self else { return false }
-            defer {
-                if self.workspaceListRefreshOperationID == operationID {
-                    self.workspaceListRefreshTask = nil
-                    self.workspaceListRefreshOperationID = nil
-                }
-            }
             let refreshed = await self.reloadWorkspaceListFromMac()
             if refreshed {
                 self.scheduleWorkspaceChangesSummaryRefresh()
+            }
+            guard self.workspaceListRefreshOperationID == operationID else { return refreshed }
+            self.workspaceListRefreshTask = nil
+            self.workspaceListRefreshOperationID = nil
+            if !Task.isCancelled,
+               self.workspaceListEventRefreshFollowUpRequested,
+               self.remoteClient === client,
+               !self.stateSyncActive {
+                self.startEventWorkspaceListRefresh(client: client)
             }
             return refreshed
         }
@@ -16870,8 +16917,8 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
     /// actual round-trip (and ends gracefully on failure, leaving the list intact).
     ///
     /// Runs on its own ``pullToRefreshTask`` handle, separate from the
-    /// event-driven ``workspaceListRefreshTask`` that a `workspace.updated` push
-    /// cancels and restarts, so a background event can never truncate the pull's
+    /// event-driven ``workspaceListRefreshTask`` that a new client's
+    /// `workspace.updated` push replaces, so a background event can never truncate the pull's
     /// spinner by cancelling the task it is awaiting. Rapid repeated pulls coalesce
     /// onto the single in-flight pull task rather than stacking duplicate
     /// `mobile.workspace.list` calls. Returns immediately when not connected, so an

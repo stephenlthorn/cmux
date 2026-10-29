@@ -1341,15 +1341,16 @@ extension MobileShellComposite {
         // authoritative refresh, AWAITED so pull-to-refresh cannot report done
         // before state applied, with the caller's probe timeout honored.
         if stateSyncActive {
-            let refreshed = await performStateSyncFetch(
+            let failure = await performStateSyncFetch(
                 client: client,
                 timeoutNanoseconds: timeoutNanoseconds
             )
+            let refreshed = failure == nil
             recordAppEvent(
                 refreshed ? .workspaceListRefreshSucceeded : .workspaceListRefreshFailed,
                 correlationID: diagnosticCorrelationID,
                 startedAt: diagnosticStartedAt,
-                failure: refreshed ? nil : .unknown,
+                failure: failure,
                 count: refreshed ? workspaces.count : nil
             )
             return refreshed

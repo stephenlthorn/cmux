@@ -1111,6 +1111,36 @@ import Testing
         _ = await send.result
     }
 
+    /// A cancel that lands after `connect()` returned, but before the connect
+    /// task checks its cancellation bit, never runs the cancellation handler.
+    /// Settling must start the close itself instead of waiting for a start
+    /// that never comes, which would strand the connected candidate and its
+    /// cleanup admission.
+    @Test func cancelAfterConnectReturnedStartsTheCandidateClose()
+        async throws {
+        let candidate = HangingCloseTransport()
+        let cancellationClose = MobileRPCConnectCancellationClose()
+        let settle = Task<Void, any Error> {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await cancellationClose.settleAfterConnect(
+                candidate,
+                cancelled: Task.isCancelled
+            )
+        }
+        do {
+            try await RPCTaskTimeout().value(
+                settle,
+                timeoutNanoseconds: 2_000_000_000
+            )
+        } catch {
+            Issue.record("Settling a late-cancelled connect never returned: \(error)")
+            return
+        }
+        #expect(await cancellationClose.task() != nil)
+        await candidate.waitUntilCloseStarted()
+        await candidate.releaseClose()
+    }
+
     @Test func callerCancelledRPCClosesSlowConnectionBeforeSendingAuthenticatedRequest() async throws {
         let transport = SlowConnectTimeoutTransport()
         let route = try hostPortRoute(kind: .debugLoopback, host: "127.0.0.1", port: 59126)

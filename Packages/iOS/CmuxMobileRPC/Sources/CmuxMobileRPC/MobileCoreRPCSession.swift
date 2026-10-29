@@ -692,11 +692,10 @@ actor MobileCoreRPCSession {
                             await cancellationClose.start(candidate)
                         }
                     }
-                    if Task.isCancelled {
-                        _ = await cancellationClose.task()
-                    } else {
-                        await cancellationClose.finishWithoutClose()
-                    }
+                    await cancellationClose.settleAfterConnect(
+                        candidate,
+                        cancelled: Task.isCancelled
+                    )
                     // A cancellation-ignoring transport must still return its
                     // late candidate to the existing abandoned-connect cleanup
                     // path so that path can close it again after completion.
@@ -720,11 +719,10 @@ actor MobileCoreRPCSession {
                     }
                     return candidate
                 } catch is CancellationError {
-                    if Task.isCancelled {
-                        _ = await cancellationClose.task()
-                    } else {
-                        await cancellationClose.finishWithoutClose()
-                    }
+                    await cancellationClose.settleAfterConnect(
+                        candidate,
+                        cancelled: Task.isCancelled
+                    )
                     reportCancelledConnect()
                     throw CancellationError()
                 } catch {
@@ -734,7 +732,10 @@ actor MobileCoreRPCSession {
                     // so an abandoned dial reports cancelled, never a false
                     // transport failure.
                     if Task.isCancelled {
-                        _ = await cancellationClose.task()
+                        await cancellationClose.settleAfterConnect(
+                            candidate,
+                            cancelled: true
+                        )
                         reportCancelledConnect()
                         throw CancellationError()
                     }

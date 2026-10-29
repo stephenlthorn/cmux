@@ -109,6 +109,32 @@ private let workspaceRowActionCapabilities = [
     "workspace.close.v1",
 ]
 
+/// `makeConnectedStore`, but recording app diagnostics into `diagnosticLog`.
+@MainActor
+private func makeConnectedStore(
+    router: LivenessHostRouter,
+    box: TransportBox,
+    clock: TestClock,
+    diagnosticLog: DiagnosticLog
+) async throws -> MobileShellComposite {
+    let runtime = LivenessTestRuntime(
+        transportFactory: LivenessTransportFactory(router: router, box: box),
+        now: { clock.now }
+    )
+    let store = MobileShellComposite(
+        runtime: runtime,
+        workspaces: PreviewMobileHost.workspaces,
+        deliveredNotificationClearer: NoopDeliveredNotificationClearer(),
+        diagnosticLog: diagnosticLog
+    )
+    store.signIn()
+    let connected = await store.connectPairingURL(
+        try attachURL(for: try makeTicket(clock: clock))
+    )
+    #expect(connected, "scripted connect must succeed")
+    return store
+}
+
 @MainActor
 struct MobileShellStateSyncTests {
     @Test func negotiationAppliesSnapshotAndSuppressesLegacyRefetch() async throws {
@@ -484,5 +510,225 @@ struct MobileShellStateSyncTests {
             await router.count(of: "mobile.sync.fetch") >= fetchesBefore + 2
         }
         #expect(trailingReloaded, "a mutation arriving during an in-flight refresh must trigger one trailing fetch")
+    }
+
+    @Test func shortLivenessProbeDoesNotBoundTheSharedStateSyncFetch() async throws {
+        let workspaceID = UUID().uuidString
+        let router = LivenessHostRouter()
+        await router.scriptSyncFetchResult(
+            jsonData: try syncSnapshotResultData(
+                epoch: "epoch-1",
+                rev: 3,
+                records: [workspaceRecord(id: workspaceID, title: "synced-alpha", sortIndex: 0)]
+            )
+        )
+        await router.scriptSyncFetchResult(
+            jsonData: try syncSnapshotResultData(
+                epoch: "epoch-1",
+                rev: 4,
+                records: [workspaceRecord(id: workspaceID, title: "synced-after-resume", sortIndex: 0)]
+            )
+        )
+        let box = TransportBox()
+        let clock = TestClock()
+        let store = try await makeConnectedStore(router: router, box: box, clock: clock)
+        let negotiated = try await pollUntil {
+            store.stateSyncActive && store.workspaces.map(\.name).contains("synced-alpha")
+        }
+        #expect(negotiated)
+        let fetchesBefore = await router.count(of: "mobile.sync.fetch")
+        let listCallsBefore = await router.count(of: "mobile.workspace.list")
+        // The Mac answers the post-resume fetch slower than the probe deadline.
+        await router.holdSyncFetchRequest(number: fetchesBefore + 1)
+
+        let healthy = await store.reloadWorkspaceListFromMac(timeoutNanoseconds: 50_000_000)
+        #expect(!healthy, "the probe must report within its own short deadline")
+        // Long enough for a fetch RPC bounded by the probe's 50ms deadline to
+        // fail and fall back to the legacy list.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        await router.releaseAllHeld()
+
+        let applied = try await pollUntil {
+            store.workspaces.map(\.name).contains("synced-after-resume")
+        }
+        #expect(applied, "the shared fetch must keep its normal RPC timeout and apply the slow answer")
+        #expect(store.stateSyncActive, "a probe deadline must not demote v2 to the legacy list")
+        #expect(
+            await router.count(of: "mobile.workspace.list") == listCallsBefore,
+            "a probe deadline must not trigger the legacy fallback reload"
+        )
+    }
+
+    @Test func livenessProbeDeadlineReportsTimedOutRefreshFailure() async throws {
+        let workspaceID = UUID().uuidString
+        let router = LivenessHostRouter()
+        await router.scriptSyncFetchResult(
+            jsonData: try syncSnapshotResultData(
+                epoch: "epoch-1",
+                rev: 3,
+                records: [workspaceRecord(id: workspaceID, title: "synced-alpha", sortIndex: 0)]
+            )
+        )
+        await router.scriptSyncFetchResult(
+            jsonData: try syncSnapshotResultData(
+                epoch: "epoch-1",
+                rev: 4,
+                records: [workspaceRecord(id: workspaceID, title: "synced-after-resume", sortIndex: 0)]
+            )
+        )
+        let box = TransportBox()
+        let clock = TestClock()
+        let log = DiagnosticLog(capacity: 256, role: .mobileClient)
+        let store = try await makeConnectedStore(
+            router: router,
+            box: box,
+            clock: clock,
+            diagnosticLog: log
+        )
+        let negotiated = try await pollUntil {
+            store.stateSyncActive && store.workspaces.map(\.name).contains("synced-alpha")
+        }
+        #expect(negotiated)
+        let fetchesBefore = await router.count(of: "mobile.sync.fetch")
+        await router.holdSyncFetchRequest(number: fetchesBefore + 1)
+        await log.clear()
+
+        let healthy = await store.reloadWorkspaceListFromMac(timeoutNanoseconds: 50_000_000)
+        #expect(!healthy)
+        func isRefreshFailure(_ event: DiagnosticEvent) -> Bool {
+            event.code == .appFeatureAction
+                && event.a == DiagnosticAppEventKind.workspaceListRefreshFailed.rawValue
+        }
+        let recorded = try await pollUntil {
+            (await log.snapshot()).events.contains(where: isRefreshFailure)
+        }
+        #expect(recorded)
+        let failures = (await log.snapshot()).events
+            .filter(isRefreshFailure)
+            .map(\.b)
+        #expect(
+            failures == [DiagnosticFailureKind.timedOut.rawValue],
+            "a probe whose deadline expired must report a timeout, not an unknown failure"
+        )
+        await router.releaseAllHeld()
+    }
+
+    @Test func legacyEventChurnLetsTheInFlightListLandThenRunsOneTrailingFetch() async throws {
+        // No scripted sync result: a legacy Mac on the workspace.updated loop.
+        let router = LivenessHostRouter()
+        let box = TransportBox()
+        let clock = TestClock()
+        let store = try await makeConnectedStore(router: router, box: box, clock: clock)
+        let probed = try await pollUntil {
+            await router.count(of: "mobile.sync.fetch") >= 1
+        }
+        #expect(probed)
+        #expect(store.stateSyncActive == false)
+
+        let listCallsBefore = await router.count(of: "mobile.workspace.list")
+        await router.scriptWorkspaceListTitles(["first-answer", "trailing-answer"])
+        await router.holdNextWorkspaceListRequests(count: 2)
+        let transport = try #require(box.get())
+        let eventGenerationBefore = store.workspaceListEventGeneration
+
+        await transport.deliver(try workspaceUpdatedEventFrame())
+        let firstStarted = await router.waitForCount(
+            of: "mobile.workspace.list",
+            atLeast: listCallsBefore + 1
+        )
+        #expect(firstStarted)
+        let revisionBefore = store.foregroundWorkspaceStateRevision
+        // Title churn while the first (slow) fetch is in flight.
+        await transport.deliver(try workspaceUpdatedEventFrame())
+        await transport.deliver(try workspaceUpdatedEventFrame())
+        let consumed = try await pollUntil {
+            store.workspaceListEventGeneration == eventGenerationBefore &+ 3
+        }
+        #expect(consumed)
+        #expect(
+            await router.count(of: "mobile.workspace.list") == listCallsBefore + 1,
+            "events during an in-flight fetch must not cancel it and start another"
+        )
+
+        await router.releaseNextHeld()
+        let firstApplied = try await pollUntil {
+            store.foregroundWorkspaceStateRevision != revisionBefore
+                && store.workspaces.map(\.name).contains("first-answer")
+        }
+        #expect(firstApplied, "the in-flight fetch must land despite newer events")
+        let trailingStarted = await router.waitForCount(
+            of: "mobile.workspace.list",
+            atLeast: listCallsBefore + 2
+        )
+        #expect(trailingStarted, "events coalesced during the fetch must run a trailing fetch")
+        await router.releaseAllHeld()
+        let trailingApplied = try await pollUntil {
+            store.workspaces.map(\.name).contains("trailing-answer")
+        }
+        #expect(trailingApplied)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(
+            await router.count(of: "mobile.workspace.list") == listCallsBefore + 2,
+            "the coalesced events must run exactly one trailing fetch"
+        )
+    }
+
+    @Test func lateScopedAttachFullListDoesNotOverwriteStateSyncProjection() async throws {
+        let syncedWorkspaceID = UUID().uuidString
+        let router = LivenessHostRouter()
+        await router.scriptSyncFetchResult(
+            jsonData: try syncSnapshotResultData(
+                epoch: "epoch-1",
+                rev: 3,
+                records: [workspaceRecord(id: syncedWorkspaceID, title: "synced-alpha", sortIndex: 0)]
+            )
+        )
+        // The attach-token full list fails, so the connect binds through the
+        // workspace-scoped list and schedules a full list afterwards; hold
+        // that one until v2 has negotiated.
+        await router.failWorkspaceListRequest(number: 1)
+        await router.holdWorkspaceListRequest(number: 3)
+        let box = TransportBox()
+        let clock = TestClock()
+        let runtime = LivenessTestRuntime(
+            transportFactory: LivenessTransportFactory(router: router, box: box),
+            now: { clock.now }
+        )
+        let store = MobileShellComposite.preview(runtime: runtime)
+        store.signIn()
+        let route = try CmxAttachRoute(
+            id: "debug_loopback",
+            kind: .debugLoopback,
+            endpoint: .hostPort(host: "127.0.0.1", port: 56584)
+        )
+        let ticket = try CmxAttachTicket(
+            workspaceID: UUID().uuidString,
+            terminalID: "live-terminal",
+            macDeviceID: "test-mac",
+            macDisplayName: "Test Mac",
+            macPairingCompatibilityVersion: CmxMobileDefaults.pairingCompatibilityVersion,
+            routes: [route],
+            expiresAt: clock.now.addingTimeInterval(3_600),
+            authToken: "attach-secret"
+        )
+        let connected = await store.connectPairingURL(try attachURL(for: ticket))
+        #expect(connected, "scripted scoped connect must succeed")
+        let fullListStarted = await router.waitForCount(of: "workspace.list", atLeast: 3)
+        #expect(fullListStarted, "a scoped connect must schedule the full attach-token list")
+        let listScopes = await router.workspaceIDs(for: "workspace.list")
+        #expect(listScopes.count == 3 && listScopes[2] == nil, "the held request must be the unscoped full list")
+        let negotiated = try await pollUntil {
+            store.stateSyncActive && store.workspaces.map(\.name).contains("synced-alpha")
+        }
+        #expect(negotiated)
+
+        await router.releaseAllHeld()
+        let settled = try await pollUntil { store.workspaceListRefreshTask == nil }
+        #expect(settled)
+        #expect(store.stateSyncActive)
+        #expect(
+            store.workspaces.map(\.name).contains("synced-alpha"),
+            "a late full list must not overwrite the v2 projection"
+        )
     }
 }

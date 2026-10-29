@@ -95,6 +95,22 @@ import CmuxMobileShellModel
         ) == .stopped(.invalidRequest))
     }
 
+    @Test func macProviderAnswersAreNotReportedAsEndpointFailures() {
+        // The Mac answered over a healthy connection: a provider missing from
+        // its PATH or a failed provider query is not an Iroh endpoint failure.
+        func hostAnswer(_ error: MobileTaskModelListError) -> MobileTaskModelRefreshOutcome {
+            MobileTaskModelRefreshOutcome(hostListResult: MobileTaskModelListResult(
+                models: [],
+                source: .fallback,
+                error: error
+            ))
+        }
+        #expect(hostAnswer(.providerUnavailable) == .stopped(.providerUnavailable))
+        #expect(hostAnswer(.providerUnavailable).diagnosticFailure == .unknown)
+        #expect(hostAnswer(.queryFailed) == .retry(.unknown))
+        #expect(hostAnswer(.hostUnavailable) == .retry(.hostUnreachable))
+    }
+
     @Test func usableBackendDoesNotEndHostRetriesOrLoseCachedModels() async {
         let model = MobileTaskAgentModel(id: "backend-model", displayName: "Backend")
         let store = MobileShellComposite(taskModelCatalogClient: MobileTaskModelCatalogClient(

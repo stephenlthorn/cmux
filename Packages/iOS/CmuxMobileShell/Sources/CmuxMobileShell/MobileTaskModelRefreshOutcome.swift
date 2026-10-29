@@ -1,4 +1,5 @@
 internal import CmuxMobileRPC
+internal import CmuxMobileShellModel
 public import CMUXMobileCore
 
 /// The next action after one task model list refresh.
@@ -64,6 +65,24 @@ public enum MobileTaskModelRefreshOutcome: Equatable, Sendable {
         self = .retry(DiagnosticFailureKind.classify(error))
     }
 
+    /// Classifies a catalog answer the Mac returned. Provider errors are
+    /// Mac-side outcomes over a healthy connection (for example the provider
+    /// CLI is not installed), never transport or Iroh endpoint failures.
+    init(hostListResult result: MobileTaskModelListResult) {
+        switch result.error {
+        case .providerUnavailable:
+            self = .stopped(.providerUnavailable)
+        case .queryFailed:
+            self = .retry(.unknown)
+        case .hostUnavailable:
+            self = .retry(.hostUnreachable)
+        case nil:
+            self = result.models.isEmpty && result.defaultModel == nil
+                ? .retry(.unknown)
+                : .succeeded
+        }
+    }
+
     /// Maps a terminal decision to the bounded failure vocabulary used by the
     /// ordinary load event. The stop event carries the more precise reason.
     public var diagnosticFailure: DiagnosticFailureKind {
@@ -81,7 +100,9 @@ public enum MobileTaskModelRefreshOutcome: Equatable, Sendable {
             case .accountMismatch:
                 .accountMismatch
             case .providerUnavailable:
-                .endpointUnavailable
+                // No bounded kind names a missing Mac-side provider; the stop
+                // event's reason carries it precisely.
+                .unknown
             case .cancelled:
                 .cancelled
             }

@@ -574,22 +574,9 @@ extension MobileShellComposite {
                             instanceTag: instanceTag
                         )
                     let result = fetch.result
-                    let outcome: MobileTaskModelRefreshOutcome
-                    switch result.error {
-                    case .providerUnavailable:
-                        outcome = .stopped(.providerUnavailable)
-                    case .queryFailed:
-                        outcome = .retry(.endpointUnavailable)
-                    case .hostUnavailable:
-                        outcome = .retry(.hostUnreachable)
-                    case nil:
-                        outcome = result.models.isEmpty && result.defaultModel == nil
-                            ? .retry(.unknown)
-                            : .succeeded
-                    }
                     return MobileTaskModelHostRefreshResult(
                         result: result,
-                        outcome: outcome,
+                        outcome: MobileTaskModelRefreshOutcome(hostListResult: result),
                         connectionIdentity: fetch.connectionIdentity
                     )
                 } catch {

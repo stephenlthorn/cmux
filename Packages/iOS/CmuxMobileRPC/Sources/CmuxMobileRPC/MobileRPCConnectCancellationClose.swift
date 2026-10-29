@@ -33,6 +33,22 @@ actor MobileRPCConnectCancellationClose {
         }
     }
 
+    /// Settles the close once the connect task's `connect()` returned or
+    /// threw. A cancel that lands after the cancellation handler's scope
+    /// never runs `start`, so a cancelled task starts the close itself
+    /// (a no-op when the handler already did) instead of waiting forever for
+    /// a start that never comes.
+    func settleAfterConnect(
+        _ candidate: any CmxByteTransport,
+        cancelled: Bool
+    ) {
+        if cancelled {
+            start(candidate)
+        } else {
+            finishWithoutClose()
+        }
+    }
+
     func task() async -> Task<Void, Never>? {
         if let closeTask {
             return closeTask

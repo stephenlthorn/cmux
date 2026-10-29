@@ -124,10 +124,13 @@ extension MobileShellComposite {
     /// supersede this gesture's task mid-flight; in that case the replacement
     /// is the authoritative fetch and the gesture follows it (bounded) rather
     /// than reporting a superseded cancel as failure.
+    ///
+    /// Returns nil once the fetch applied, otherwise the failure this waiter
+    /// reports: `.timedOut` when its own deadline expired first.
     func performStateSyncFetch(
         client: MobileCoreRPCClient,
         timeoutNanoseconds: UInt64? = nil
-    ) async -> Bool {
+    ) async -> DiagnosticFailureKind? {
         // Single-flight: same-client demand coalesces onto the in-flight
         // runner, so awaiting the returned task IS awaiting the authoritative
         // outcome (a trailing follow-up sweep runs inside the same task). The
@@ -136,16 +139,21 @@ extension MobileShellComposite {
         //
         // Each WAITER is bounded by its own deadline: a 3s liveness probe
         // joining a slow 30s fetch must report within its contract, not the
-        // runner's. The runner itself is never cancelled by a waiter's
-        // deadline; it keeps converging in the background.
-        let task = scheduleStateSyncFetch(client: client, timeoutNanoseconds: timeoutNanoseconds)
+        // runner's. The runner itself is never bounded by a waiter's
+        // deadline (its RPC keeps the normal request timeout); it keeps
+        // converging in the background. Handing it the probe's 3s would fail
+        // a slow post-resume fetch and drop v2 into the legacy fallback.
+        let task = scheduleStateSyncFetch(client: client)
         guard let timeoutNanoseconds else {
-            return await task.value
+            return await task.value ? nil : .unknown
         }
         let race = await Self.raceAgainstDeadline(nanoseconds: timeoutNanoseconds) {
             await task.value
         }
-        return race.value ?? false
+        guard let applied = race.value else {
+            return race.didTimeOut ? .timedOut : .cancelled
+        }
+        return applied ? nil : .unknown
     }
 
     /// Account-boundary teardown: wipes mirrored records (titles,
@@ -172,8 +180,7 @@ extension MobileShellComposite {
     /// repair share it, mirroring ``workspaceListRefreshTask`` semantics).
     @discardableResult
     private func scheduleStateSyncFetch(
-        client: MobileCoreRPCClient,
-        timeoutNanoseconds: UInt64? = nil
+        client: MobileCoreRPCClient
     ) -> Task<Bool, Never> {
         // Single-flight per client: new demand while a runner is in flight
         // requests one trailing sweep and attaches to the runner. Cancelling
@@ -199,8 +206,7 @@ extension MobileShellComposite {
                 self.stateSyncFetchFollowUpRequested = false
                 applied = await self.runStateSyncFetch(
                     client: client,
-                    generation: generation,
-                    timeoutNanoseconds: timeoutNanoseconds
+                    generation: generation
                 )
                 // One trailing sweep per follow-up request; a failed fetch
                 // does not loop (the fallback path owns failure recovery).
@@ -220,8 +226,7 @@ extension MobileShellComposite {
     @discardableResult
     private func runStateSyncFetch(
         client: MobileCoreRPCClient,
-        generation: UUID,
-        timeoutNanoseconds: UInt64? = nil
+        generation: UUID
     ) async -> Bool {
         // Currency check BEFORE the send, not only after: a negotiation task
         // scheduled for a listener generation that has since been replaced
@@ -243,7 +248,7 @@ extension MobileShellComposite {
             )
             let data = try await client.sendRequest(
                 request,
-                timeoutNanoseconds: timeoutNanoseconds ?? runtime?.rpcRequestTimeoutNanoseconds
+                timeoutNanoseconds: runtime?.rpcRequestTimeoutNanoseconds
             )
             guard remoteClient === client, connectionState == .connected, !Task.isCancelled else { return false }
             let response = try JSONDecoder().decode(MobileSyncFetchResponse.self, from: data)

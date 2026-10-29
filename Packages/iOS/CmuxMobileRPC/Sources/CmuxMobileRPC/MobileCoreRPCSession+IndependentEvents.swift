@@ -153,8 +153,14 @@ extension MobileCoreRPCSession {
         if (envelope["kind"] as? String) == "event" {
             guard let topic = envelope["topic"] as? String else { return }
             let payloadData: Data?
+            // The host may send a bare `null`, string, or number. Writing one
+            // as a top-level object without `.fragmentsAllowed` raises an
+            // Objective-C exception that `try?` cannot catch.
             if let payload = envelope["payload"] {
-                payloadData = try? JSONSerialization.data(withJSONObject: payload)
+                payloadData = try? JSONSerialization.data(
+                    withJSONObject: payload,
+                    options: .fragmentsAllowed
+                )
             } else {
                 payloadData = nil
             }
@@ -172,7 +178,12 @@ extension MobileCoreRPCSession {
               pending[id] != nil || pipelinedPending[id] != nil else { return }
         if (envelope["ok"] as? Bool) == true {
             let result = envelope["result"] ?? [:]
-            if let data = try? JSONSerialization.data(withJSONObject: result) {
+            // A bare result (`null`, string, number) needs `.fragmentsAllowed`
+            // for the same reason as an event payload above.
+            if let data = try? JSONSerialization.data(
+                withJSONObject: result,
+                options: .fragmentsAllowed
+            ) {
                 settlePendingRequest(
                     requestID: id,
                     settlement: .response(.success(data))

@@ -812,4 +812,41 @@ import Testing
         #expect(try await transport.sentRequests().isEmpty)
     }
 
+    /// The Mac sends a nil or non-JSON result as a bare `null`, string, or
+    /// number. Re-encoding one as a top-level JSON object raises an
+    /// Objective-C exception that `try?` cannot catch, aborting the app.
+    @Test(arguments: [#"null"#, #""bare""#, #"7"#])
+    func bareReplyResultSettlesTheRequestInsteadOfCrashing(result: String) async throws {
+        let base = ControllableResponseTransport(closeEndsReceive: true)
+        let session = MobileCoreRPCSession(makeTransport: { base })
+        let request = Task {
+            try await session.send(
+                payload: try MobileCoreRPCClient.requestData(method: "mobile.host.status", id: "bare-result"),
+                requestID: "bare-result",
+                deadlineUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+            )
+        }
+        await base.waitUntilSent(count: 1)
+        await base.deliverRawChunk(try MobileSyncFrameCodec.encodeFrame(
+            Data(#"{"id":"bare-result","ok":true,"result":\#(result)}"#.utf8)
+        ))
+        #expect(try await request.value == Data(result.utf8))
+        await session.tearDown(error: .connectionClosed)
+    }
+
+    @Test(arguments: [#"null"#, #""bare""#])
+    func bareEventPayloadReachesListenersInsteadOfCrashing(payload: String) async throws {
+        let session = MobileCoreRPCSession(makeTransport: {
+            ControllableResponseTransport(closeEndsReceive: true)
+        })
+        let subscription = await session.addEventListener(topics: ["workspace.updated"])
+        await session.dispatch(frame: Data(
+            #"{"kind":"event","topic":"workspace.updated","payload":\#(payload)}"#.utf8
+        ))
+        var events = subscription.stream.makeAsyncIterator()
+        let event = await events.next()
+        #expect(event?.payloadJSON == Data(payload.utf8))
+        await session.tearDown(error: .connectionClosed)
+    }
+
 }
