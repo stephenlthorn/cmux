@@ -62,11 +62,16 @@ actor RoutingHostRouter {
     private(set) var pasteImages: [PasteImageRecord] = []
     private(set) var pastes: [PasteRecord] = []
     private var feedPasteSubmitted = true
+    private var rejectFeedDecisions = false
     private var feedTextPages: [(text: String, version: Double, nextOffset: Int?)] = []
     private(set) var feedTextRequests: [(itemID: String?, offset: Int?, version: Double?)] = []
 
     func setFeedTextPages(_ pages: [(text: String, version: Double, nextOffset: Int?)]) {
         feedTextPages = pages
+    }
+
+    func setRejectFeedDecisions(_ reject: Bool) {
+        rejectFeedDecisions = reject
     }
 
     func setFeedPasteSubmitted(_ submitted: Bool) {
@@ -283,6 +288,10 @@ actor RoutingHostRouter {
         let method = info.method
         let id = info.id
         switch method {
+        case "feed.permission.reply", "feed.question.reply", "feed.exit_plan.reply":
+            return rejectFeedDecisions
+                ? try? Self.errorFrame(id: id, message: "request no longer pending")
+                : try? Self.resultFrame(id: id, result: ["delivered": true])
         case "feed.text":
             feedTextRequests.append((info.itemID, info.directoryOffset, info.feedTextVersion))
             guard !feedTextPages.isEmpty else {

@@ -699,8 +699,11 @@ extension MobileShellComposite {
         decision: MobileAgentFeedDecision
     ) async -> Bool {
         guard let requestID = item.requestID,
-              !agentFeedPendingReplyRequestIDs.contains(requestID),
-              let target = agentFeedTarget(for: agentFeedOwnerKey(for: item)) else {
+              !agentFeedPendingReplyRequestIDs.contains(requestID) else {
+            return false
+        }
+        guard let target = agentFeedTarget(for: agentFeedOwnerKey(for: item)) else {
+            agentFeedDecisionReplyFailure = item.id
             return false
         }
         agentFeedPendingReplyRequestIDs.insert(requestID)
@@ -708,6 +711,7 @@ extension MobileShellComposite {
         do {
             let request = try MobileCoreRPCClient.requestData(method: method, params: params)
             _ = try await target.client.sendRequest(request)
+            if agentFeedDecisionReplyFailure == item.id { agentFeedDecisionReplyFailure = nil }
             guard agentFeedClient(for: target.ownerKey) === target.client else { return true }
             // Optimistic local resolution; the scheduled refresh reconciles
             // against the Mac's authoritative feed.
@@ -730,8 +734,14 @@ extension MobileShellComposite {
                 error=\(String(describing: error), privacy: .private)
                 """
             )
+            agentFeedDecisionReplyFailure = item.id
             return false
         }
+    }
+
+    /// The Feed showed the failed answer; forget it.
+    public func dismissAgentFeedDecisionReplyFailure() {
+        agentFeedDecisionReplyFailure = nil
     }
 
     /// Marks the pending row carrying `requestID` locally resolved. Internal

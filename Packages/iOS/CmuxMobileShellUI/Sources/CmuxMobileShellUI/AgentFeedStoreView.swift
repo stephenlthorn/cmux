@@ -49,6 +49,16 @@ struct AgentFeedStoreView: View {
             Text(String(localized: "mobile.agentFeed.openFailed.message",
                         defaultValue: "The event’s computer, workspace, or tab is no longer available.", bundle: .module))
         }
+        .alert(String(localized: "mobile.agentFeed.replyFailed.title", defaultValue: "Couldn’t send your answer", bundle: .module),
+               isPresented: Binding(
+                   get: { store.agentFeedDecisionReplyFailure != nil },
+                   set: { if !$0 { store.dismissAgentFeedDecisionReplyFailure() } }
+               )) {
+            Button(String(localized: "mobile.agentFeed.fullText.close", defaultValue: "Close", bundle: .module), role: .cancel) {}
+        } message: {
+            Text(String(localized: "mobile.agentFeed.replyFailed.message",
+                        defaultValue: "The Mac didn’t get it. Check that it’s connected, then try again.", bundle: .module))
+        }
     }
 
     private var actions: AgentFeedActions {

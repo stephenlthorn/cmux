@@ -475,6 +475,9 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
     /// Terminal replies that failed, keyed by row, until the user retries or
     /// a later send to that row succeeds.
     public internal(set) var agentFeedFailedTerminalReplies: [MobileAgentFeedItemID: MobileAgentFeedFailedReply] = [:]
+    /// The Feed row whose permission, question or plan answer last failed to
+    /// reach its Mac, until the Feed shows it and the user dismisses it.
+    public internal(set) var agentFeedDecisionReplyFailure: MobileAgentFeedItemID?
     var agentFeedSnapshotsByMac: [String: AgentFeedMacSnapshot] = [:]
     @ObservationIgnored var agentFeedStopReasonCache = AgentFeedStopReasonCache()
     var agentFeedKnownRevisionsByMac: [String: Int] = [:]
