@@ -27,7 +27,7 @@ import Testing
         store.apply(.connected(info: backend.info, meID: "me", lagged: false))
         store.updateListState(.init(sendReadReceipts: false))
         #expect(!store.listState.sendReadReceipts)
-        try await waitUntil { backend.replied }
+        try await waitUntil { !backend.received.isEmpty }
         #expect(backend.received == [.init(sendReadReceipts: false)])
         #expect(!store.listState.sendReadReceipts)
     }

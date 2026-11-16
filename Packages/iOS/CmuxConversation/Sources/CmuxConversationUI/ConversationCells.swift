@@ -656,17 +656,31 @@ extension MessageCell {
 final class TimestampCell: UICollectionViewCell {
     static let reuseID = "timestamp"
     private let label = UILabel()
+    /// The separator's message date; its day word is recomputed when the day
+    /// changes, so a transcript left open past midnight stops saying "Today".
+    private var date: Date?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         label.textAlignment = .center
         contentView.addSubview(label)
+        for name in [Notification.Name.NSCalendarDayChanged, UIApplication.significantTimeChangeNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(dayChanged), name: name, object: nil)
+        }
+    }
+
+    @objc private func dayChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let date = self.date else { return }
+            self.label.attributedText = Self.text(for: date)
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(date: Date) {
+        self.date = date
         label.attributedText = Self.text(for: date)
         setNeedsLayout()
     }
@@ -755,13 +769,14 @@ final class TimestampCell: UICollectionViewCell {
         // Older than a week, Messages joins the date and time with "at"
         // ("Thu, Sep 24 at 7:18 PM"; device recording, iOS 26).
         var joinsWithAt = false
-        if calendar.isDateInToday(date) {
+        switch ConversationDayLabel(for: date, now: now, calendar: calendar) {
+        case .today:
             day = String(localized: "conversation.timestamp.today", defaultValue: "Today", bundle: .module)
-        } else if calendar.isDateInYesterday(date) {
+        case .yesterday:
             day = String(localized: "conversation.timestamp.yesterday", defaultValue: "Yesterday", bundle: .module)
-        } else if let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day, days < 7 {
+        case .weekday:
             day = date.formatted(.dateTime.weekday(.wide))
-        } else {
+        case .date:
             day = date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
             joinsWithAt = true
         }
