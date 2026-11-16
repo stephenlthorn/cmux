@@ -494,3 +494,12 @@ private func sizeState(
         #expect(MobileTerminalConnectedDevicesMenuItem(presentation: nil) == nil)
     }
 }
+
+@Test func aTerminalWhoseGridChangedWhereItRunsReReportsItsViewport() {
+    var surface = MobileTerminalSizingSurface()
+    let before = surface.viewportReassertGeneration
+    surface.remoteGridChanged()
+    #expect(surface.viewportReassertGeneration == before + 1)
+    #expect(surface.state == nil)
+    #expect(surface.attachment.allowsTerminalTraffic)
+}

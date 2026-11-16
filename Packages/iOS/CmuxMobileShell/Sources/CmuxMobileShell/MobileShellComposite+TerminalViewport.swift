@@ -177,7 +177,8 @@ extension MobileShellComposite {
 
         guard foregroundMacKey == preparation.ownerKey,
               workspaceID(forTerminalID: surfaceID) == preparedWorkspaceID,
-              reportedViewportSizesByTerminalKey[key] == reportedGrid,
+              remoteSizedGridsBySurfaceID[surfaceID] != nil
+                || reportedViewportSizesByTerminalKey[key] == reportedGrid,
               viewportReportGenerationsBySequenceKey[sequenceKey] == requestGeneration else {
             recordAppEvent(
                 .terminalViewportReportFailed,
@@ -229,6 +230,18 @@ extension MobileShellComposite {
             return (
                 columns: granted.columns,
                 rows: granted.rows,
+                renderEpoch: nil,
+                renderRevisionFloor: nil
+            )
+        }
+        if let remoteGrid = remoteSizedGridsBySurfaceID[surfaceID] {
+            // The Mac does not size this terminal: answer with the grid it
+            // runs at and leave the Mac untouched (noteRemoteSizedGrid).
+            effectiveViewportSizesBySurfaceID[surfaceID] = remoteGrid
+            finishPreparation()
+            return (
+                columns: remoteGrid.columns,
+                rows: remoteGrid.rows,
                 renderEpoch: nil,
                 renderRevisionFloor: nil
             )

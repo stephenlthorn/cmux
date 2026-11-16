@@ -123,10 +123,39 @@ extension MobileShellComposite {
     /// Records the sizing fields of a replay result.
     func applyTerminalReplaySizing(_ response: MobileTerminalReplayResponse, surfaceID: String) {
         if let state = response.sizeState {
+            remoteSizedGridsBySurfaceID[surfaceID] = nil
             applyTerminalSizeState(state, selfParticipantID: response.selfParticipantID, surfaceID: surfaceID)
-        } else if var surface = terminalSizingBySurfaceID[surfaceID] {
+            return
+        }
+        if var surface = terminalSizingBySurfaceID[surfaceID] {
             surface.recoveredFromNetwork()
             terminalSizingBySurfaceID[surfaceID] = surface
+        }
+        noteRemoteSizedGrid(response, surfaceID: surfaceID)
+    }
+
+    /// A Mac that supports shared sizing publishes a size state for every
+    /// terminal it sizes. One it does not (a mirrored tmux window, sized by
+    /// tmux) only crops tmux's output when shrunk to the phone, so the phone
+    /// shows it at its own grid, scaled to fit with pinch to zoom, and stops
+    /// asking for its size; a size it already asked for is withdrawn.
+    func noteRemoteSizedGrid(_ response: MobileTerminalReplayResponse, surfaceID: String) {
+        guard supportsSharedTerminalSizing,
+              let columns = response.columns, let rows = response.rows,
+              columns > 0, rows > 0 else { return }
+        let grid = MobileTerminalViewportSize(columns: columns, rows: rows)
+        let previous = remoteSizedGridsBySurfaceID.updateValue(grid, forKey: surfaceID)
+        guard previous != grid else { return }
+        effectiveViewportSizesBySurfaceID[surfaceID] = grid
+        var surface = terminalSizingBySurfaceID[surfaceID] ?? MobileTerminalSizingSurface()
+        surface.remoteGridChanged()
+        terminalSizingBySurfaceID[surfaceID] = surface
+        guard previous == nil, reportedTerminalViewportSizesBySurfaceID.removeValue(forKey: surfaceID) != nil else {
+            return
+        }
+        clearTerminalViewport(surfaceID: surfaceID)
+        if hasTerminalOutputSink(surfaceID: surfaceID) {
+            requestColdAttachTerminalReplay(surfaceID: surfaceID)
         }
     }
 

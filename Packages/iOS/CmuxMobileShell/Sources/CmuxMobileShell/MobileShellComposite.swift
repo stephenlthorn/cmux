@@ -1712,6 +1712,9 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
     /// Shared sizing state per terminal surface (size state, self participant,
     /// attachment). See `MobileShellComposite+TerminalSizing.swift`.
     var terminalSizingBySurfaceID: [String: MobileTerminalSizingSurface] = [:]
+    /// Terminals the Mac does not size, with the grid they run at. See
+    /// ``MobileShellComposite/noteRemoteSizedGrid(_:surfaceID:)``.
+    var remoteSizedGridsBySurfaceID: [String: MobileTerminalViewportSize] = [:]
     /// Monotonic viewport fences scoped to the Mac app instance that consumes
     /// them. Warm Iroh focus swaps keep both peer connections alive, so their
     /// counters must survive independently for the signed-in account lifetime.
@@ -9414,6 +9417,9 @@ public final class MobileShellComposite: MobileTerminalOutputSinking {
         viewportSize: MobileTerminalViewportSize
     ) {
         let key = viewportKey(workspaceID: workspaceID, terminalID: terminalID)
+        // A terminal the Mac does not size must not ride this phone's grid on
+        // input, paste or replay either.
+        guard remoteSizedGridsBySurfaceID[terminalID.rawValue] == nil else { return }
         guard reportedViewportSizesByTerminalKey[key] != viewportSize else { return }
         reportedViewportSizesByTerminalKey[key] = viewportSize
         recordAppEvent(

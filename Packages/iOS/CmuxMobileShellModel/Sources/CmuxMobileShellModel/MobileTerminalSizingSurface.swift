@@ -135,6 +135,12 @@ public struct MobileTerminalSizingSurface: Equatable, Sendable {
         viewportReassertGeneration &+= 1
     }
 
+    /// Marks a grid change made where the terminal runs (a mirrored tmux
+    /// window resized by tmux), so the surface re-reports and learns it.
+    public mutating func remoteGridChanged() {
+        viewportReassertGeneration &+= 1
+    }
+
     /// Marks a network recovery that finished without a size state (an older
     /// host that does not publish one).
     public mutating func recoveredFromNetwork() {

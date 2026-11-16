@@ -95,6 +95,7 @@ actor LivenessHostRouter {
     /// FIFO of scripted `mobile.sync.fetch` results (state sync v2 tests).
     private var syncFetchResults: [[String: Any]] = []
     private var replayPayloads: [(text: String?, sequence: UInt64?, renderGrid: MobileTerminalRenderGridFrame?)] = []
+    private var replayGridPayloads: [(text: String, columns: Int, rows: Int, sizeState: [String: Any]?)] = []
     private var replayTexts: [String] = []
     private var replayFailuresRemaining = 0
     private var replayFailureCode: String?
@@ -335,6 +336,12 @@ actor LivenessHostRouter {
     /// Replace the pending screen snapshot as the host terminal changes offline.
     func replaceReplayText(_ text: String) {
         replayTexts = [text]
+    }
+
+    /// A replay that reports the Mac terminal's grid, with or without the
+    /// shared sizing state a Mac publishes for terminals it sizes itself.
+    func enqueueReplayGrid(text: String, columns: Int, rows: Int, sizeState: [String: Any]? = nil) {
+        replayGridPayloads.append((text: text, columns: columns, rows: rows, sizeState: sizeState))
     }
 
     func enqueueReplayPayload(text: String?, sequence: UInt64?) {
@@ -671,6 +678,16 @@ actor LivenessHostRouter {
             if emptyReplayResponsesRemaining > 0 {
                 emptyReplayResponsesRemaining -= 1
                 return try? Self.resultFrame(id: id, result: [:])
+            }
+            if !replayGridPayloads.isEmpty {
+                let payload = replayGridPayloads.removeFirst()
+                var result: [String: Any] = [
+                    "data_b64": Data(payload.text.utf8).base64EncodedString(),
+                    "columns": payload.columns,
+                    "rows": payload.rows,
+                ]
+                if let sizeState = payload.sizeState { result["size_state"] = sizeState }
+                return try? Self.resultFrame(id: id, result: result)
             }
             if !replayPayloads.isEmpty {
                 let payload = replayPayloads.removeFirst()

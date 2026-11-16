@@ -30,6 +30,9 @@ extension MobileShellComposite {
     public var supportsSimulatorKeepalive: Bool {
         supportsSimulatorStream && supportedHostCapabilities.contains(Self.simulatorKeepaliveCapability)
     }
+    static let terminalSharedSizingCapability = "terminal.shared_sizing.v1"
+    /// Whether the connected Mac publishes a size state for every terminal it sizes.
+    var supportsSharedTerminalSizing: Bool { supportedHostCapabilities.contains(Self.terminalSharedSizingCapability) }
     static let chatArtifactFoldersCapability = "chat.artifact.folders.v1"
     static let terminalArtifactListCapability = "terminal.artifact.list.v1"
 
